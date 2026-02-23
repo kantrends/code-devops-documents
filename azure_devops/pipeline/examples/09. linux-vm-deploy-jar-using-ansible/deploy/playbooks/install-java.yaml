@@ -1,0 +1,19 @@
+---
+
+# Playbook which installs JAVA on the server
+
+- name: Add Adoptium Java Repo
+  yum_repository:
+    name: adoptium-java-repo
+    description: "Adoptium JAVA Repo"
+    baseurl: https://nexus.premierinc.com/artifacts/repository/adoptium-group/rpm/rhel/$releasever/$basearch
+    gpgcheck: yes
+    gpgkey: https://nexus.premierinc.com/artifacts/repository/adoptium-group/api/gpg/key/public
+    enabled: true
+
+- name: "Install JAVA JRE {{ java_name }}.x86_64"
+  yum:
+    name: "{{ java_name }}.x86_64"
+    state: present
+    enablerepo: adoptium-java-repo
+    update_cache: yes

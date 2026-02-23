@@ -1,0 +1,65 @@
+parameters:
+- name: stage_name
+- name: ado_environment
+- name: azure_subscription_sc
+- name: databricks_env
+- name: variable_group
+- name: condition
+
+stages:
+- stage: ${{ parameters.stage_name }}
+  condition: ${{ parameters.condition }}
+  jobs:
+  - deployment: deploy
+    environment: "${{ parameters.ado_environment }}"
+    variables:
+    - group: ${{ parameters.variable_group }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: AzureCLI@2
+            displayName: 'Retrieve SPN Details'
+            inputs:
+              azureSubscription: ${{ parameters.azure_subscription_sc }}
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Set SPN details as pipeline variables
+                echo "##vso[task.setvariable variable=SPN_CLIENT_ID]$servicePrincipalId" 
+                echo "##vso[task.setvariable variable=SPN_CLIENT_SECRET]$servicePrincipalKey"
+                echo "##vso[task.setvariable variable=SPN_TENANT_ID]$tenantId"
+              addSpnToEnvironment: true
+              
+          - bash: |
+              echo "Client ID: $(SPN_CLIENT_ID)"
+              echo "Client Secret: $(SPN_CLIENT_SECRET)"
+              echo "Tenant ID: $(SPN_TENANT_ID)"
+            displayName: 'Display SPN Details'
+
+          - bash: |
+              curl -o databricks.zip "https://nexus.premierinc.com/artifacts/repository/github-proxy/databricks/cli/releases/download/v${DATABRICKS_VERSION}/databricks_cli_${DATABRICKS_VERSION}_linux_amd64.zip"
+              unzip -o databricks.zip
+              ls -la | grep databricks
+              ./databricks --version
+            displayName: Install Databricks CLI
+            env:
+              DATABRICKS_VERSION: "0.220.0"
+
+          - bash: ./databricks bundle validate -t ${{ parameters.databricks_env }}
+            displayName: Validate
+            env:
+              BUNDLE_ROOT: $(Build.SourcesDirectory)
+              DATABRICKS_CLIENT_ID: "$(SPN_CLIENT_ID)"
+              # databricks oauth client secret and not SP client secret from Entra ID
+              DATABRICKS_CLIENT_SECRET: "$(DATABRICKS_OAUTH_CLIENT_SECRET)"
+
+
+          - bash: ./databricks bundle deploy -t ${{ parameters.databricks_env }}
+            displayName: Deploy Databricks
+            env:
+              BUNDLE_ROOT: $(Build.SourcesDirectory)
+              DATABRICKS_CLIENT_ID: "$(SPN_CLIENT_ID)"
+              # databricks oauth client secret and not SP client secret from Entra ID
+              DATABRICKS_CLIENT_SECRET: "$(DATABRICKS_OAUTH_CLIENT_SECRET)"

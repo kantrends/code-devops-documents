@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.premierinc.code</groupId>
+    <artifactId>acr_app_service_example</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <description>acr_app_service_example</description>
+
+    <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <excludes>
+                    <exclude>**/*.p12</exclude>
+                    <exclude>**/*.jks</exclude>
+                </excludes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <includes>
+                    <include>**/*.p12</include>
+                    <include>**/*.jks</include>
+                </includes>
+            </resource>
+        </resources>
+
+        <plugins>
+            <plugin>
+                <groupId>io.fabric8</groupId>
+                <artifactId>docker-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>docker-clean</id>
+                        <phase>clean</phase>
+                        <goals>
+                            <goal>stop</goal>
+                            <goal>remove</goal>
+                        </goals>
+                        <configuration>
+                            <removeAll>true</removeAll>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>docker-build</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>build</goal>
+                        </goals>
+                    </execution>
+                    <!-- <execution>
+                        <id>docker-push</id>
+                        <phase>deploy</phase>
+                        <goals>
+                            <goal>push</goal>
+                        </goals>
+                    </execution> -->
+                </executions>
+                <configuration>
+                    <skip>${no-docker}</skip>
+                    <images combine.children="append">
+                        <image>
+                            <name>${project.artifactId}</name>
+                            <alias>${project.artifactId}</alias>
+                            <build>
+                                <from>premiercommonacr.azurecr.io/jre11:latest</from>
+                                <tags>
+                                    <tag>latest</tag>
+                                    <tag>${project.version}</tag>
+                                </tags>
+                                <ports>
+                                    <port>8080</port>
+                                </ports>
+                                <workdir>/opt/app/cm-web</workdir>
+                                <assembly>
+                                    <basedir>/opt/app/cm-web</basedir>
+                                    <inline>
+                                        <files>
+                                            <file>
+                                                <source>${project.build.directory}/${project.artifactId}-${project.version}.jar</source>
+                                                <destName>${project.artifactId}.jar</destName>
+                                            </file>
+                                            <file>
+                                                <source>${project.basedir}/src/main/resources/entrypoint.sh</source>
+                                                <destName>entrypoint.sh</destName>
+                                                <fileMode>755</fileMode>
+                                            </file>
+                                        </files>
+                                    </inline>
+                                </assembly>
+                                <user>root</user>
+                                <cmd>/opt/app/cm-web/entrypoint.sh</cmd>
+                            </build>
+                        </image>
+                    </images>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>no-docker</id>
+            <properties>
+                <no-docker>true</no-docker>
+            </properties>
+        </profile>
+    </profiles>
+
+</project>

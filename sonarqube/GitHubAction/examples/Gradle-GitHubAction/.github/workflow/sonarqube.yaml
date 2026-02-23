@@ -1,0 +1,47 @@
+name: Gradle SonarQube Analysis
+
+on:
+  workflow_dispatch: 
+  push:
+    branches:
+      - main # Trigger on push to the main branch
+
+jobs:
+
+  sonarqube:
+    name: SonarQube Analysis
+    runs-on: [self-hosted, premierinc, linux]
+    steps:
+
+      # Step 1: Checkout the code
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Disable shallow clone for better analysis accuracy
+
+      # Step 2: Set up JDK 17
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+          overwrite-settings: false  # Add this line to prevent overwriting ~/.m2/settings.xml
+
+      # Step 3: Cache SonarQube packages
+      - name: Cache SonarQube packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      # Step 4: Run SonarQube analysis
+      - name: Analyze with SonarQube
+        env:
+          SONAR_TOKEN: "${{ secrets.SYSTEM_SONARQUBE_CE_TOKEN }}"  # SonarQube authentication token
+          SONAR_HOST_URL: "${{ vars.SYSTEM_SONARQUBE_CE_URL }}"  # SonarQube server URL
+        run: |
+          cd gradle-project
+          chmod +x ./gradlew
+          ./gradlew sonar --info \
+            -Dsonar.projectKey=code-test-gradle \
+            -Dsonar.projectName=code-test-gradle 

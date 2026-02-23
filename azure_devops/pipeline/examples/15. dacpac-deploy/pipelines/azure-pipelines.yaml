@@ -1,0 +1,26 @@
+pool: Premier Windows Agents
+
+resources:
+  repositories:
+  - repository: sdlc_templates
+    type: github
+    name: PremierInc/shield-ado-templates
+    endpoint: PremierInc
+
+stages:
+- template: ci.yaml
+
+- template: deploy.yaml
+  parameters:
+    stage_name: Dev_Deploy
+    ado_environment: dev
+    az_service_connection_sc: SC_ARM_PROJECT_NP
+    variable_group: repo1-dev
+
+- template: deploy.yaml
+  parameters:
+    stage_name: Prod_Deploy
+    ado_environment: prod
+    az_service_connection_sc: SC_ARM_PROJECT_PRD
+    variable_group: repo1-prod
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))

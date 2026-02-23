@@ -1,0 +1,79 @@
+stages:
+- stage: ci
+  jobs:
+  - job: Build
+    variables:
+      solutionFile: 'SafeHarborMicroServiceAPI.sln'
+    steps:
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '8.x'
+    
+    - script: dotnet restore --verbosity normal $(solutionFile)
+      displayName: 'Restore dependencies'
+    
+    - script: dotnet build --configuration Release $(solutionFile)
+      displayName: 'Build the project'
+    
+    - script: dotnet publish --no-build --configuration Release --output $(Build.ArtifactStagingDirectory) $(solutionFile)
+      displayName: 'Publish the project'
+    
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/output.zip'
+        replaceExistingArchive: true
+
+    - publish: '$(Build.ArtifactStagingDirectory)/output.zip'
+      artifact: 'deploy'
+    
+  - job: SecurityScan
+    variables: 
+    - group: SDLC Credentials
+    steps:
+    - template: checkmarx-scan.yml@sdlc_templates
+      parameters:
+        CHECKMARX_PASSWORD: $(CHECKMARX_PASSWORD)
+        BRANCH_SCAN_LIST: "main,*develop*,feature*"
+        PROJECT_NAME: "corpeng-safeharbor"
+        PROJECT_VERSION: "$(Build.BuildId)"
+        TEAM: "CORPENG"
+        
+    - template: lifecycle-scan.yml@sdlc_templates
+      parameters:
+        IQ_API_TOKEN: $(IQ_API_TOKEN)
+        ARTIFACT_VERSION: "$(Build.BuildId)"
+        DISTRIBUTION: Hosted
+  
+  - job: SonarQubeAnalysis
+    displayName: 'Build and SonarQube Analysis'
+    condition: eq(variables['Build.SourceBranch'],'refs/heads/main')
+    steps:
+      # Checkout the repository
+          - checkout: self
+
+          - task: UseDotNet@2
+            inputs:
+              packageType: 'sdk'
+              version: '8.x'
+          
+          - task: SonarQubePrepare@6
+            inputs:
+              SonarQube: 'sonarqube-ce'   
+              scannerMode: 'MSBuild'
+              projectKey: 'your-project-key'       
+              projectName: 'your-project-name'
+              projectVersion: '$(Build.BuildId)'
+              
+          - script: dotnet build --configuration Release $(solutionFile)
+            displayName: 'Build for SonarQube Scan'
+      
+          - task: SonarQubeAnalyze@6
+            
+          - task: SonarQubePublish@6
+            inputs:
+              pollingTimeoutSec: '300'
+            displayName: 'Publish SonarQube Results'

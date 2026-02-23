@@ -1,0 +1,30 @@
+# Ansible connection details
+ansible_user: ansible 
+ansible_become: true
+ansible_become_method: dzdo 
+ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+ansible_python_interpreter: /usr/bin/python3.12 # provide the default python available on Target server
+
+# user
+user: "ae_user"
+group: "ae_grp"
+
+# java vars
+java_name: "temurin-8-jre"
+java_home: "/usr/lib/jvm/{{ java_name }}"
+
+# app info in nexus
+app_maven_extension: "jar"
+app_download_url: "https://nexus.premierinc.com/artifacts/service/rest/v1/search/assets/download?repository=public&group={{ app_maven_group_id }}&name={{ app_maven_artifact_id }}&maven.extension={{ app_maven_extension }}&maven.baseVersion={{ app_maven_version }}&sort=version"
+
+# app vars
+app_name: "{{ app_maven_artifact_id }}"
+app_dir: "/opt/app/{{ app_name }}"
+app_user: "{{ user }}"
+app_group: "{{ group }}"
+app_location: "{{ app_dir }}/{{ app_maven_artifact_id }}.{{ app_maven_extension }}"
+app_startup_script: "{{ app_dir }}/startup.sh"
+app_keystore: "{{ app_dir }}/.keystore"
+app_systemd_location: "/etc/systemd/system/{{ app_name }}.service"
+app_logs_dir: "{{ app_dir }}/logs"
+app_log_file: "{{ app_logs_dir }}/{{ app_name }}.log"

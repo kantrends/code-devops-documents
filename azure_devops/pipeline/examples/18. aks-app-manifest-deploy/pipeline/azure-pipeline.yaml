@@ -1,0 +1,53 @@
+# Pipeline URL: 
+
+pool:
+  name: 'Premier Linux Agents'
+
+# trigger: none
+# pr: none
+
+
+stages:
+- template: ci.yaml
+
+- template: deploy.yaml
+  parameters:
+    stage_name: dev
+    deploy_variable_group: aks-poc-dev
+    ado_environment: azure-dev
+    az_subscription_sc: SP_CODE_NP_SUB_1
+
+- template: deploy.yaml
+  parameters:
+    stage_name: qa
+    deploy_variable_group: aks-poc-qa
+    ado_environment: azure-dev
+    az_subscription_sc: SP_CODE_NP_SUB_1
+
+# - stage: NP_Deploy
+#   jobs:
+#   - template: acr-deploy.yml
+#     parameters:
+#       services:
+#       - qrda1_manager
+#       - legacy_manager
+
+#   - job: deploy_to_aks
+#     dependsOn: 
+#       - qrda1_manager
+#       - legacy_manager
+#     steps:
+#       - task: KubernetesManifest@1
+#         inputs:
+#           action: 'deploy'
+#           connectionType: 'azureResourceManager'
+#           azureSubscriptionConnection: 'SC_ARM_MCE_NP'
+#           azureResourceGroup: 'MCEDEV-east'
+#           kubernetesCluster: 'mce-dev-eastus-01'
+#           namespace: qa
+#           containers: |
+#             mcedevacr.azurecr.io/qrda1_manager:$(VERSION_TAG)
+#             mcedevacr.azurecr.io/legacy_manager:$(VERSION_TAG)
+#           manifests: |
+#             pipeline_aks/aks_manifest_files/*.yml
+    

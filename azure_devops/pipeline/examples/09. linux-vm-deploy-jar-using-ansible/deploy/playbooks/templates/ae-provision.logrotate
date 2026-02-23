@@ -1,0 +1,10 @@
+{{ app_log_file }} {
+    su {{ app_user }} {{ app_group }}
+    daily
+    rotate 120
+    copytruncate
+    notifempty
+    missingok
+    compress
+    delaycompress
+}

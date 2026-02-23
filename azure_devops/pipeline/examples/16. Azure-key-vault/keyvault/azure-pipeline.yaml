@@ -1,0 +1,67 @@
+trigger: none
+pr: none
+
+pool: Premier Linux Agents
+
+parameters:
+  - name: environment
+    default: 'dev'
+    values:
+      - dev
+      - perf
+      - prod
+
+name: Sync ${ { parameters.environment } } Keyvault
+
+variables:
+  - name: condition
+    # Pipeline will only work if it will trigger from the repo named as "Projectname-azure-operations"
+    # Example if your project name is Code then the repo name must be "code-azure-operations"
+    value: and(succeeded(), contains(variables['Build.Repository.Name'], 'projectname-azure-operations'))  # Default condition for all environments
+
+    # Environment-specific variables and conditions
+  - ${{ if eq(parameters.environment, 'dev') }}:
+      # Enter the Variable group name created in the Library
+    - group: projectname-az-keyvault-dev 
+    - name: ado_environment
+      value: azure-dev
+    - name: az_subscription_sc
+      value: Azure subscription name #Example: SC_ARM_QContinuum_NP
+
+  - ${{ if eq(parameters.environment, 'perf') }}:
+    - group: projectname-az-keyvault-perf
+    - name: ado_environment
+      value: azure-perf
+    - name: az_subscription_sc
+      value: Azure subscription name #Example: SC_ARM_QCONTINUUM_Prd
+
+  - ${{ if eq(parameters.environment, 'prod') }}:
+    - group: projectname-az-keyvault-prod
+    - name: ado_environment
+      value: azure-prod
+    - name: az_subscription_sc
+      value: Azure subscription name #Example: SC_ARM_QCONTINUUM_Prd
+    - name: condition  # Override condition for prod environment
+      value: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), contains(variables['Build.Repository.Name'], 'projectname-azure-operations'))
+
+
+jobs:
+  - deployment: deploy
+    environment: "$(ado_environment)"
+    condition: ${{ variables.condition }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+            - checkout: self
+            - task: AzureCLI@2
+              displayName: Upload KV Secrets to Keyvault
+              name: app_insights
+              inputs:
+                azureSubscription: $(az_subscription_sc)
+                scriptType: 'bash'
+                scriptLocation: 'inlineScript'
+                inlineScript: |
+                  source keyvault/keyvault.sh
+                  update_secret $(var_az_keyvault) secret1 "$(secret1)"
+                  update_secret $(var_az_keyvault) secret2 "$(secret2)"

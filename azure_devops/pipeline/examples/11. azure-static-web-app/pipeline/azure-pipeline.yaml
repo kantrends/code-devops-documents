@@ -1,0 +1,48 @@
+pool: Premier Linux Agents
+
+resources:
+  repositories:
+    - repository: sdlc_templates
+      type: github
+      name: PremierInc/shield-ado-templates
+      endpoint: PremierInc
+
+stages:
+- template: ci.yaml
+- template: deploy.yaml
+  parameters:
+    stage_name: dev_deploy
+    ado_environment: dev
+    variable_group: static_app_dev
+  
+- template: deploy.yaml
+  parameters:
+    stage_name: qa_deploy
+    ado_environment: qa
+    variable_group: static_app_qa
+    # deploys main, develop & release branch to QA
+    condition: and(
+                succeeded(),
+                in(variables['Build.SourceBranch'], 'refs/heads/main', 'refs/heads/develop') 
+                startsWith(variables['Build.SourceBranch'], 'refs/heads/release')
+               )
+
+- template: deploy.yaml
+  parameters:
+    stage_name: uat_deploy
+    ado_environment: uat
+    variable_group: static_app_uat
+    # deploys main & release branch to UAT
+    condition: and(
+                succeeded(),
+                eq(variables['Build.SourceBranch'], 'refs/heads/main') 
+                startsWith(variables['Build.SourceBranch'], 'refs/heads/release')
+               )
+
+- template: deploy.yaml
+  parameters:
+    stage_name: prod_deploy
+    ado_environment: prod
+    variable_group: static_app_prod
+    # deploys only main branch to production
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))

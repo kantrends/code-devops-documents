@@ -1,0 +1,23 @@
+parameters:
+  - name: environment
+    displayName: Select Environment
+    default: QA
+    values:
+      - QA
+      - UAT
+      - PROD
+      - DEV
+
+pr: none
+trigger: none
+pool: 'Premier Linux Agents'
+
+stages:
+  - stage: SmokeTest_${{ parameters.environment }}
+    jobs:
+      - template: test-template.yaml
+        parameters:
+          test_suite_collection_path: $(TestSuite)
+          send_email: False
+          test_case_type: Smoke
+          Environment: ${{ parameters.environment }}

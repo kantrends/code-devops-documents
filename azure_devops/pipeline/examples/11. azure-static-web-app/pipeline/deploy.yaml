@@ -1,0 +1,31 @@
+parameters:
+- name: stage_name
+- name: depends_on
+  type: object
+  default: ['ci']
+- name: condition
+  default: succeeded()
+- name: ado_environment
+- name: variable_group
+
+stages:
+- stage: ${{ parameters.stage_name }}
+  dependsOn: ${{ parameters.depends_on }}
+  condition: ${{ parameters.condition }}
+  jobs:
+  - deployment: deploy
+    environment: "${{ parameters.ado_environment }}"
+    variables:
+    - group: ${{ parameters.variable_group }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureStaticWebApp@0
+            inputs:
+              app_location: '$(Pipeline.Workspace)/drop'
+              skip_app_build: true
+              skip_api_build: true
+              verbose: true
+              azure_static_web_apps_api_token: '$(AZ_STATIC_WEB_APP_TOKEN)'
+

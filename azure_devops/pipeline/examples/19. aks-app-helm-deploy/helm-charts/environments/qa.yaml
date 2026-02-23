@@ -1,0 +1,96 @@
+replicaCount: 1
+
+image:
+  repository: "code-sample-app-nginx-helm"
+  tag: "0.0.1-SNAPSHOT"
+  pullPolicy: Always
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: sample-app-helm.code-aks-qa.premierinc.com
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  # tls is not required at pod level since it is not mandated in member tenant AKS
+  # tls:
+  # - hosts:
+  #   - sample-app-helm.code-aks-qa.premierinc.com
+  #   secretName: my-tls-secret
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: false
+
+persistentVolume:
+  name: sample-app-1-helm-qa-azurefile-pv
+  volumeHandle: "pqa-np-sample-app-1-helm-qa-azurefile-pv-pqastoragenpw3pe"
+  shareName: "aks-poc"
+  storageAccount: "pqastoragenpw3pe"
+  resourceGroup: "PQA_NP"
+
+persistentVolumeClaim:
+  name: sample-app-1-helm-pvc
+  volumeName: sample-app-1-helm-qa-azurefile-pv
+
+
+secretProviderClass:
+  name: sample-app-helm-az-kv-secrets
+  usePodIdentity: "false"
+  useVMManagedIdentity: "true"
+  userAssignedIdentityID: "87948081-ca7d-4e0f-b2e2-10850c990042"
+  keyvaultName: "CODE-np"
+  tenantId: "b110eddf-23ae-457c-a6f3-734d592b2847"
+  objects:
+    - objectName: sample-app-db-username
+      objectType: secret
+      objectAlias: db-username
+    - objectName: sample-app-db-password
+      objectType: secret
+      objectAlias: db-password
+  secretObjects:
+    - secretName: sample-app-helm-az-kv-secrets-obj
+      type: Opaque
+      data:
+        - objectName: db-username
+          key: db_username
+        - objectName: db-password
+          key: db_password
+
+env:
+  - name: DB_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: sample-app-helm-az-kv-secrets-obj
+        key: db_username
+  - name: DB_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: sample-app-helm-az-kv-secrets-obj
+        key: db_password
+
+volumes:
+  - name: azure
+    persistentVolumeClaim:
+      claimName: sample-app-1-helm-pvc
+
+  # for secrets-store az keyvault
+  - name: secrets-store01-inline
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: "sample-app-helm-az-kv-secrets"
+
+
+volumeMounts:
+  - name: azure
+    mountPath: /mnt/azure_pvc
+
+  # for secrets-store az keyvault
+  - name: secrets-store01-inline
+    mountPath: "/mnt/secrets-store"
+    readOnly: true

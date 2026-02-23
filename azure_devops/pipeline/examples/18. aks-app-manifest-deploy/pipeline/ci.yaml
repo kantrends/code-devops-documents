@@ -1,0 +1,54 @@
+stages:
+- stage: ci
+  jobs:
+  - job: set_properties
+    displayName: Set Properties
+    steps:
+    - bash: | 
+        # write any logic you want to set the app name & app version
+        # groupId=$($MAVEN help:evaluate -Dexpression="project.groupId" -q -DforceStdout)
+        # artifactId=$($MAVEN help:evaluate -Dexpression="project.artifactId" -q -DforceStdout)
+        # version=$($MAVEN help:evaluate -Dexpression="project.version" -q -DforceStdout)
+        version=1.0.0-SNAPSHOT
+        artifactId=code-sample-app-nginx-manifest
+        groupId="com.premierinc"
+        echo "##vso[task.setvariable variable=PROJECT_VERSION;isOutput=true]$version"
+        echo "##vso[task.setvariable variable=PROJECT_ARTIFACTID;isOutput=true]$artifactId"
+        echo "##vso[task.setvariable variable=PROJECT_GROUPID;isOutput=true]$groupId"
+      name: project_properties
+      displayName: Set Project Properties
+      env:
+        MAVEN: $(SYSTEM_MAVEN_3)
+        JAVA_HOME: $(SYSTEM_JDK_21)
+
+    - bash: |
+        set -eu
+        echo "Project Version: $(project_properties.PROJECT_VERSION)"
+        echo "Project Artifact ID: $(project_properties.PROJECT_ARTIFACTID)"
+        echo "Project Group ID: $(project_properties.PROJECT_GROUPID)"
+      displayName: Display Project Properties
+
+  - job: Build
+    dependsOn: set_properties
+    variables:
+      - name: ARTIFACT_ID
+        value: $[ dependencies.set_properties.outputs['project_properties.PROJECT_ARTIFACTID'] ]
+      - name: APP_VERSION
+        value: $[ dependencies.set_properties.outputs['project_properties.PROJECT_VERSION'] ]
+    steps:
+    - bash: docker image build -f Dockerfile -t "$IMAGE_REPO:$VERSION_TAG" .
+      displayName: Build Image
+      workingDirectory: sample-app-manifest
+      env:
+        IMAGE_REPO: $(ARTIFACT_ID)
+        VERSION_TAG: $(APP_VERSION)
+
+    - bash: docker image save -o image.tar "$IMAGE_REPO:$VERSION_TAG"
+      displayName: Convert Image to TAR file
+      env:
+        IMAGE_REPO: $(ARTIFACT_ID)
+        VERSION_TAG: $(APP_VERSION)
+
+    - publish: image.tar
+      artifact: docker_image
+      displayName: Publish Artifacts

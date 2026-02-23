@@ -1,0 +1,54 @@
+stages:
+- stage: ci
+  jobs:
+  - job: Build
+    variables:
+      solutionFile: 'filename.sln'
+    steps:
+    - task: UseDotNet@2
+      inputs:
+        packageType: 'sdk'
+        version: '8.x'
+    
+    - script: dotnet restore --verbosity normal $(solutionFile)
+      displayName: 'Restore dependencies'
+    
+    - script: dotnet build --configuration Release $(solutionFile)
+      displayName: 'Build the project'
+    
+    - script: dotnet publish --no-build --configuration Release --output $(Build.ArtifactStagingDirectory) $(solutionFile)
+      displayName: 'Publish the project'
+    
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/output.zip'
+        replaceExistingArchive: true
+
+    - publish: '$(Build.ArtifactStagingDirectory)/output.zip'
+      artifact: 'deploy'
+      
+# connect with security team to createcheckmarx for this by their side.
+  - job: checkmarx_scan
+    displayName: Checkmarx Scan
+    variables:
+      - group: 'SDLC Credentials'
+    steps:
+      - template: checkmarx-scan.yml@sdlc_templates
+        parameters:
+          CHECKMARX_PASSWORD: "$(CHECKMARX_PASSWORD)"
+          PROJECT_NAME: "sandbox-maven-dtr-ucp"
+          PROJECT_VERSION: $(Build.BuildId)
+          TEAM: "sandbox"
+          # CHECKMARX_ARGUMENTS is optional.  Add it if you want to skip any files.
+          CHECKMARX_ARGUMENTS: -LocationPathExclude "grails-app/assets/javascripts,src/test,src/integration-test,grails-app/taglib/twitter/bootstrap" -LocationFilesExclude "**/grails-wrapper.jar"
+
+
+      - template: lifecycle-scan.yml@sdlc_templates
+        parameters:
+          IQ_API_TOKEN: $(IQ_API_TOKEN)
+          ARTIFACT_VERSION: "$(Build.BuildId)"
+          DISTRIBUTION: Hosted
+

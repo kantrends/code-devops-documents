@@ -1,0 +1,33 @@
+
+pool: 'Premier Linux Agents'
+
+resources:
+  repositories:
+    - repository: sdlc_templates
+      type: github
+      name: PremierInc/shield-ado-templates
+      endpoint: PremierInc
+
+stages:
+- template: ci.yml
+
+- template: deploy.yml
+  parameters:
+    stage_name: DEV_DEPLOY
+    depends_on: ['CI']
+    blue_green: false
+    ado_environment: 'PAS-NON-PROD'
+    az_subscription_sc: 'SC_ARM_SUB_PASREV_NP'
+    deploy_variable_group: 'revelations-annotator-tool-dev'
+    condition: and(succeeded(), in(variables['Build.SourceBranch'], 'refs/heads/main', 'refs/heads/develop'))
+
+- template: deploy.yml
+  parameters:
+    stage_name: UAT_DEPLOY
+    depends_on: ['CI']
+    blue_green: false
+    ado_environment: 'PAS-UAT'
+    az_subscription_sc: 'SC_ARM_SUB_PAS_Prd'
+    deploy_variable_group: 'revelations-annotator-tool-uat'
+    condition: and(succeeded(), in(variables['Build.SourceBranch'], 'refs/heads/main', 'refs/heads/develop-uat-deploy-0.0.1'))
+

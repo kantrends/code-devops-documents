@@ -1,0 +1,36 @@
+filebeat.autodiscover:
+  providers:
+  - type: docker
+    templates:
+    - condition:
+        equals:
+          docker.container.labels.app: "impaqtgatewayui"
+      config:
+      - type: filestream
+        enabled: true
+        id: container-${data.docker.container.id}
+        prospector.scanner.symlinks: true
+        paths:
+          - /opt/docker/containers/${data.docker.container.id}/*.log
+        parsers:
+          - container: ~
+        processors:
+          - decode_json_fields:
+              fields: ["message"]
+              target: ""
+              overwrite_keys: true
+
+
+output.elasticsearch:
+  hosts: ["${ES_HOST}"]
+  username: "${ES_USERNAME}"
+  password: "${ES_PASSWORD}"
+  ssl.verification_mode: "none"  # or "full" if you have valid certs
+  index: "filebeat-impaqtgatewayui-%{+yyyy.MM}"
+
+
+logging.level: info
+
+# Template configuration for custom index (required when using custom index name)
+setup.template.name: "filebeat-impaqtgatewayui"
+setup.template.pattern: "filebeat-impaqtgatewayui-*"

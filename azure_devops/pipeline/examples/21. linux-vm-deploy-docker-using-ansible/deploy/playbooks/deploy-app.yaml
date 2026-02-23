@@ -1,0 +1,178 @@
+---
+# In this example, we assume the service account "mce_adm" is present on the Server already. 
+# if not, work with infra team for adding this account and then you can use it in the ansible script.
+
+- name: Create impaqtgatewayui Basic Directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: mce_adm
+    group: mce_adm
+    mode: '0755'
+    state: directory
+  loop:
+    - /opt/app/impaqtgatewayui
+
+# If your application has TLS support, you can skip Nginx
+# or else, you can use Nginx as reverse proxy for TLS termination
+# Nginx related configurations
+- name: Create Nginx Home Directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: mce_adm
+    group: mce_adm
+    mode: '0755'
+    state: directory
+  loop:
+    - /opt/app/impaqtgatewayui/nginx
+    - /opt/app/impaqtgatewayui/nginx/ssl
+
+- name: Copy SSL/TLS Certificates
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+  loop:
+  - { src: "{{ nginx_ssl_certificate }}", dest: "/opt/app/impaqtgatewayui/nginx/ssl/cert.pem" }
+  - { src: "{{ nginx_ssl_key }}", dest: "/opt/app/impaqtgatewayui/nginx/ssl/cert.key" }
+
+- name: Generate nginx config with dynamic upstream servers
+  template:
+    src: templates/nginx.conf
+    dest: "/opt/app/measure_manager/nginx/app.conf"
+
+
+# Filebeat related configuration to send logs to ECE
+- name: Create Filebeat Home Directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: mce_adm
+    group: mce_adm
+    mode: '0755'
+    state: directory
+  loop:
+    - /opt/app/impaqtgatewayui/filebeat
+
+- name: Create Filebeat Container Directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: '0755'
+    state: directory
+  loop:
+    - /opt/app/impaqtgatewayui/filebeat/data
+    - /opt/app/impaqtgatewayui/filebeat/logs
+
+- name: Copy Filebeat Configuration
+  ansible.builtin.copy:
+    src: "files/filebeat.yml"
+    dest: "/opt/app/impaqtgatewayui/filebeat/filebeat.yml"
+    owner: root
+    group: root
+    mode: '0644'
+
+# ACR login step
+- name: Log in to private registry
+  community.docker.docker_login:
+    registry_url: "{{ docker_registry }}"
+    username: "{{ docker_username }}"
+    password: "{{ docker_password }}"
+
+# We will the existing docker containers before deploying new ones
+- name: Tear down existing services
+  community.docker.docker_compose_v2:
+    project_name: impaqtgatewayui
+    state: absent
+    definition:
+      services:
+        impaqtgatewayui:
+        nginx:
+        filebeat:
+
+# Deploy using Docker Compose feature
+# If you don't need services, you can remove them
+- name: Deploy impaqtgatewayui and nginx using Docker Compose
+  community.docker.docker_compose_v2:
+    project_name: impaqtgatewayui
+    pull: always
+    wait: true
+    wait_timeout: 180
+    scale:
+      # you can control the number of instances of your application by this way. 
+      impaqtgatewayui: "{{ impaqtgatewayui_instance_count | default(1) }}" 
+      nginx: 1 # should be 1. Don't change it
+      filebeat: 1 # should be 1. Don't change it
+    definition:
+      services:
+        impaqtgatewayui:
+          image: "{{ impaqtgatewayUI_docker_image }}"
+          environment:
+            ASPNETCORE_ENVIRONMENT: "{{ aspnetcore_environment }}" 
+          labels:
+            # required by filebeat to filter logs of container
+            - "app=impaqtgatewayui" 
+            # used in Kibana to filter the logs
+            - "app_env={{ deploy_environment }}"     
+            - "server={{ ansible_hostname }}"  
+          volumes:
+            - "impaqtgatewayui:/app/uploads/{{ nas_env }}"
+          healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost/"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 5s
+          restart: unless-stopped
+        
+        nginx:
+          image: "nginx:1.28.0"
+          ports:
+            - "8443:8443"
+          labels:
+            # required by filebeat to filter logs of container
+            - "app=impaqtgatewayui" 
+            # used in Kibana to filter the logs
+            - "app_env={{ deploy_environment }}" 
+            - "server={{ ansible_hostname }}"
+          volumes:
+              - /opt/app/impaqtgatewayui/nginx/app.conf:/etc/nginx/conf.d/impaqtgatewayUI-nginx.conf:ro
+              - /opt/app/impaqtgatewayui/nginx/ssl:/etc/nginx/ssl:ro
+          healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost"]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+          restart: unless-stopped
+
+        filebeat:
+          image: "docker.elastic.co/beats/filebeat:8.17.2" # This should be same as in ECE stack
+          user: root
+          volumes:
+            # config file
+            - /opt/app/impaqtgatewayui/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+            # docker container logs
+            - /opt/docker/containers:/opt/docker/containers:ro
+            # for filebeat "autodiscover"
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+            # filebeat logs
+            - /opt/app/impaqtgatewayui/filebeat/logs:/usr/share/filebeat/logs
+            # filebeat data
+            - /opt/app/impaqtgatewayui/filebeat/data:/usr/share/filebeat/data
+          environment:
+            # ECE Elasticsearch configuration
+            - "ES_HOST={{ es_host }}"
+            - "ES_USERNAME={{ es_username }}"
+            - "ES_PASSWORD={{ es_password }}"
+          command: ["--strict.perms=false"]
+          restart: unless-stopped
+          depends_on:
+          - impaqtgatewayui
+          - nginx
+
+      volumes:
+        impaqtgatewayui:
+            driver_opts:
+              type: "nfs"
+              o: "addr={{ nas_addr }},nolock,soft,rw"
+              device: "{{ impaqtgatewayui_nas_device }}"

@@ -1,0 +1,37 @@
+stages:
+- stage: ci
+  displayName: "ImpaqtGatewayUI CI"
+  jobs:
+  - job: Build
+    displayName: "Build Docker Image"
+    steps:
+      - bash: |
+          echo "Building Docker image: $(SERVICE_NAME):$(VERSION_TAG)"
+          docker build --no-cache -f "./Dockerfile" -t $(SERVICE_NAME):$(VERSION_TAG) .
+        displayName: Build Docker Image
+      
+      - bash: docker image save -o image.tar $(SERVICE_NAME):$(VERSION_TAG)
+        displayName: Convert Image to TAR
+
+      - publish: image.tar
+        artifact: $(SERVICE_NAME)
+        displayName: Publish Artifacts
+
+  - job: SecurityScans
+    displayName: "Security Scans"
+    variables:
+      - group: 'SDLC Credentials'
+    steps:
+      - template: checkmarx-scan.yml@sdlc_templates
+        parameters:
+          CHECKMARX_PASSWORD: "$(CHECKMARX_PASSWORD)"
+          PROJECT_NAME: $(Build.Repository.Name)
+          PROJECT_VERSION: "$(Build.BuildId)"
+          TEAM: ImpaqtGateway
+          SOURCE_PATH: "$(Build.SourcesDirectory)"
+
+      - template: lifecycle-scan.yml@sdlc_templates
+        parameters:
+          IQ_API_TOKEN: $(IQ_API_TOKEN)
+          ARTIFACT_VERSION: "$(Build.BuildId)"
+          DISTRIBUTION: Hosted

@@ -1,0 +1,29 @@
+# you can comment this entire thing out if you don't use
+# premier SSL certificate
+---
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: azure-tls
+spec:
+  provider: azure
+  parameters:
+    usePodIdentity: "false"
+    useVMManagedIdentity: "true"
+    userAssignedIdentityID: {{ .Values.akv.clientId }} # Set the clientID of the user-assigned managed identity to use
+    keyvaultName: {{ .Values.akv.keyVaultName }}
+    objects: |
+      array:
+        - |
+          objectName: {{ .Values.akv.certName }} # certificate name in azure key vault
+          objectType: secret
+          objectAlias: ssl_certificate
+    tenantId: {{ .Values.akv.tenantId }}
+  secretObjects:
+    - secretName: ingress-tls-csi
+      type: kubernetes.io/tls
+      data:
+        - objectName: ssl_certificate # object alias
+          key: tls.key
+        - objectName: ssl_certificate # object alias
+          key: tls.crt

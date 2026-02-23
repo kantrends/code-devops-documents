@@ -1,0 +1,21 @@
+stages:
+- stage: ci
+  jobs:
+  - job: build
+    steps:
+    - task: VSBuild@1
+      inputs:
+        solution: '**\*.sln'
+
+    - publish: bin/Debug
+      artifact: drop-$(Build.BuildId)
+
+  - job: security_scan
+    variables:
+    - group: SDLC Credentials
+    steps:
+    - template: lifecycle-scan.yml@sdlc_templates
+      parameters:
+        IQ_API_TOKEN: $(IQ_API_TOKEN)
+        ARTIFACT_VERSION: "$(Build.BuildId)"
+        DISTRIBUTION: Hosted

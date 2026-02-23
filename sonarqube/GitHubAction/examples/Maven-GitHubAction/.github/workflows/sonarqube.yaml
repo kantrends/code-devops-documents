@@ -1,0 +1,42 @@
+name: Maven SonarQube Analysis
+
+on:
+  workflow_dispatch: 
+  push:
+    branches:
+      - main # Trigger on push to the main branch
+  
+jobs:    
+  
+  sonarqube:
+    name: SonarQube Analysis
+    runs-on: [self-hosted, premierinc, linux]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+          overwrite-settings: false  # Add this line to prevent overwriting ~/.m2/settings.xml
+
+      - name: Cache SonarQube packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Build and analyze
+        env:
+          SONAR_TOKEN: "${{ secrets.SYSTEM_SONARQUBE_CE_TOKEN }}"
+          SONAR_HOST_URL: "${{ vars.SYSTEM_SONARQUBE_CE_URL }}"
+        run: |
+          cd maven-project
+          ./mvnw -B -U verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+            -Dsonar.projectKey=code-test-maven \
+            -Dsonar.projectName=code-test-maven

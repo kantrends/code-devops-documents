@@ -1,0 +1,14 @@
+[dev]
+c3dumcemm01
+
+[qa]
+c3qumcemm01
+
+[uat]
+c3sumcemm01
+c3sumcemm02
+
+[prod]
+c2pumcemm01
+c2pumcemm02
+c2pumcemm03

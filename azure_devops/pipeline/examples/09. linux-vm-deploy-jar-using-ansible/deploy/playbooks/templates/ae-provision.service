@@ -1,0 +1,16 @@
+[Unit]
+Description={{ app_name }} Service
+After=syslog.target network.target
+
+[Service]
+Type=simple
+SuccessExitStatus=143
+User={{ app_user }}
+Group={{ app_group }}
+ExecStart={{ app_startup_script }}
+Environment=SPRING_PROFILES_ACTIVE={{ app_spring_profiles_active }}
+Environment=SPRING_DATASOURCE_USERNAME={{ app_spring_datasource_username }}
+Environment=SPRING_DATASOURCE_PASSWORD={{ app_spring_datasource_password }}
+
+[Install]
+WantedBy=multi-user.target

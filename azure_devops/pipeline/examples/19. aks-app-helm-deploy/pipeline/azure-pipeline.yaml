@@ -1,0 +1,26 @@
+# Pipeline URL: 
+
+pool:
+  name: 'Premier Linux Agents'
+
+# trigger: none
+# pr: none
+
+
+stages:
+- template: ci.yaml
+- template: deploy.yaml
+  parameters:
+    stage_name: dev
+    deploy_variable_group: aks-helm-poc-dev
+    ado_environment: azure-dev
+    az_subscription_sc: SP_CODE_NP_SUB_1
+    chartValueFile: environments/dev.yaml
+
+- template: deploy.yaml
+  parameters:
+    stage_name: qa
+    deploy_variable_group: aks-helm-poc-qa
+    ado_environment: azure-dev
+    az_subscription_sc: SP_CODE_NP_SUB_1
+    chartValueFile: environments/qa.yaml

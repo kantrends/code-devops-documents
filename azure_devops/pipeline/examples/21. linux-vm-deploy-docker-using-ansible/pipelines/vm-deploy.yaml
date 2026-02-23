@@ -1,0 +1,93 @@
+parameters:    
+- name: stage_name
+- name: app_variablegroup
+- name: acr_variable_group
+- name: ece_variablegroup
+- { name: depends_on, default: ['ci'], type: object }
+- name: ado_environment
+- name: ansible_private_key_file_secure_library
+- name: ssl_cert_secure_file
+- name: ssl_cert_key_secure_file
+- { name: condition, default: succeeded() }
+
+stages:
+- stage: ${{ parameters.stage_name }}
+  dependsOn: ${{ parameters.depends_on }}
+  condition: ${{ parameters.condition }}
+  variables:
+    APP_VERSION: $(VERSION_TAG)
+  jobs:
+  - job: ansible_artifacts
+    steps:
+    - publish: deploy/playbooks
+      artifact: ansible
+    
+  - deployment: deploy
+    dependsOn: ansible_artifacts
+    environment: ${{ parameters.ado_environment }}
+    variables:
+    - group: ${{ parameters.app_variablegroup }}
+    - group: ${{ parameters.acr_variable_group }}
+    - group: ${{ parameters.ece_variablegroup }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - template: deploy-push-to-acr.yaml
+            parameters:
+              services:
+              - $(SERVICE_NAME)
+
+          - task: DownloadSecureFile@1
+            name: ssl_cert
+            displayName: 'Download SSL Cert'
+            inputs:
+              secureFile: "${{ parameters.ssl_cert_secure_file }}" 
+
+          - task: DownloadSecureFile@1
+            name: ssl_cert_key
+            displayName: 'Download SSL Key'
+            inputs:
+              secureFile: "${{ parameters.ssl_cert_key_secure_file }}" 
+
+          - task: DownloadSecureFile@1
+            name: ansible_private_key
+            displayName: 'Download Ansible SSH Private Key'
+            inputs:
+              secureFile: "${{ parameters.ansible_private_key_file_secure_library }}" 
+
+          - bash: |
+              $PYTHON -m venv .venv
+              source .venv/bin/activate
+              python3 --version
+              # use ansible version compatible with python: https://endoflife.date/ansible#compatibility
+              python3 -m pip install ansible==3.13.0
+            displayName: Install Ansible
+            workingDirectory: $(Pipeline.Workspace)/ansible
+            env:
+              PYTHON: $(SYSTEM_PYTHON_3_14)
+
+          - bash: |
+              source .venv/bin/activate
+
+              chmod 400 "$PRIVATE_KEY_FILE"
+              export ANSIBLE_FORCE_COLOR=true
+
+              ansible-playbook -i hosts \
+                            -e ansible_ssh_private_key_file="$PRIVATE_KEY_FILE" \
+                            -e deploy_environment=$(ANSIBLE_ENVIRONMENT) \
+                            -e impaqtgatewayUI_docker_image="$(DOCKER_REGISTRY)/$(SERVICE_NAME):$(APP_VERSION)" \
+                            -e docker_username="$(DOCKER_USERNAME)" \
+                            -e docker_password="$(DOCKER_PASSWORD)" \
+                            -e docker_registry="$(DOCKER_REGISTRY)" \
+                            -e es_host=$(ES_HOST) \
+                            -e es_username=$(ES_USERNAME) \
+                            -e es_password="$(ES_PASSWORD)" \
+                            -e aspnetcore_environment=$(var_aspnetcore_environment) \
+                            -e nginx_ssl_certificate="$(ssl_cert.secureFilePath)" \
+                            -e nginx_ssl_key="$(ssl_cert_key.secureFilePath)" \
+                            vm-deploy.yaml
+            env:
+              PRIVATE_KEY_FILE: "$(ansible_private_key.secureFilePath)"
+            workingDirectory: $(Pipeline.Workspace)/ansible
+            displayName: Ansible Deploy

@@ -1,0 +1,8 @@
+# Azure Functions for Python Developers
+azure-functions>=1.18.0,<2.0.0
+
+# HTTP requests
+requests>=2.31.0
+
+# Optional: For better JSON handling
+jsonschema>=4.17.0

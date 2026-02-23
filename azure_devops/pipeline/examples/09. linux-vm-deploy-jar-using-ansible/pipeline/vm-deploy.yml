@@ -1,0 +1,72 @@
+parameters:    
+- name: stage_name
+- name: app_variablegroup
+- { name: depends_on, default: ['ci'], type: object }
+- name: ado_environment
+- name: ansible_private_key_file_secure_library
+- { name: condition, default: succeeded() }
+
+stages: 
+- stage: ${{ parameters.stage_name }} 
+  dependsOn: ${{ parameters.depends_on }}
+  condition: ${{ parameters.condition }}
+  variables:
+  - name: APP_VERSION
+    value: $[ stageDependencies.ci.set_properties.outputs['project_properties.PROJECT_VERSION'] ]
+  - name: ARTIFACTID
+    value: $[ stageDependencies.ci.set_properties.outputs['project_properties.PROJECT_ARTIFACTID'] ]
+  - name: GROUPID
+    value: $[ stageDependencies.ci.set_properties.outputs['project_properties.PROJECT_GROUPID'] ]
+  jobs:
+  - deployment: deploy
+    environment: ${{ parameters.ado_environment }}
+    variables:
+    - group: "${{ parameters.app_variablegroup }}"
+    strategy:
+      runOnce:
+        deploy:
+          steps: 
+          - task: DownloadSecureFile@1
+            name: ansible_private_key
+            displayName: 'Download Ansible SSH Private Key'
+            inputs:
+              secureFile: "${{ parameters.ansible_private_key_file_secure_library }}" 
+
+          - bash: |
+              $PYTHON -m venv .venv
+              source .venv/bin/activate
+              python3 --version
+              # use ansible version compatible with python: https://endoflife.date/ansible#compatibility
+              python3 -m pip install ansible==3.13.0
+            displayName: Install Ansible
+            workingDirectory: $(Pipeline.Workspace)/ansible
+            env:
+              PYTHON: $(SYSTEM_PYTHON_3_14)
+
+          - bash: |
+              source .venv/bin/activate
+
+              chmod 400 "$PRIVATE_KEY_FILE"
+              export ANSIBLE_FORCE_COLOR=true
+
+              ansible-playbook -i hosts \
+                            -e deploy_environment=$DEPLOY_ENVIRONMENT \
+                            -e ansible_ssh_private_key_file="$PRIVATE_KEY_FILE" \
+                            -e app_spring_profiles_active="$SPRING_PROFILE" \
+                            -e app_spring_datasource_username="$DB_USERNAME" \
+                            -e app_spring_datasource_password="$DB_PASSWORD" \
+                            -e app_maven_artifact_id="$ARTIFACTID" \
+                            -e app_maven_version="$APP_VERSION" \
+                            -e app_maven_group_id="$GROUPID" \
+                            vm-deploy.yaml
+            env:
+              SPRING_PROFILE: $(SPRING_PROFILE)
+              DB_USERNAME: "$(DB_USERNAME)"
+              DB_PASSWORD: "$(DB_PASSWORD)"
+              DEPLOY_ENVIRONMENT: "$(ANSIBLE_ENVIRONMENT)"
+              PRIVATE_KEY_FILE: "$(ansible_private_key.secureFilePath)"
+              APP_VERSION: "$(APP_VERSION)"
+              ARTIFACTID: "$(ARTIFACTID)"
+              GROUPID: "$(GROUPID)"
+            workingDirectory: $(Pipeline.Workspace)/ansible
+            displayName: Ansible Deploy

@@ -1,0 +1,178 @@
+parameters:
+- name: stage_name
+- name: depends_on
+  type: object
+  default: ['ci']
+- name: condition
+  default: succeeded()
+- name: ado_environment
+- name: az_service_connection
+- name: variable_group
+
+stages:
+- stage: ${{ parameters.stage_name }}
+  dependsOn: ${{ parameters.depends_on }}
+  condition: ${{ parameters.condition }}
+  variables:
+    - group: ${{ parameters.variable_group }}
+  jobs:
+  - deployment: Deploy
+    environment: ${{ parameters.ado_environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - task: AzureCLI@2
+            displayName: Retrieve App Insights Details
+            name: app_insights
+            inputs:
+              azureSubscription: ${{ parameters.az_service_connection }}
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                app_insights_instrumentation_key=$(az resource show --resource-type "microsoft.insights/components" --query properties.InstrumentationKey -g $(var_app_insights_rg) -n $(var_app_insights))
+                app_insights_connection_string=$(az resource show --resource-type "microsoft.insights/components" --query properties.ConnectionString -g $(var_app_insights_rg) -n $(var_app_insights))
+                echo "##vso[task.setvariable variable=APP_INSIGHTS_INSTRUMENTATION_KEY;isOutput=true]$app_insights_instrumentation_key"
+                echo "##vso[task.setvariable variable=APP_INSIGHTS_CONNECTION_STRING;isOutput=true]$app_insights_connection_string"
+              visibleAzLogin: false
+              failOnStandardError: true
+
+          # NOTE: This azure storage account settings and updating it in keyvault are required only if it is not configured
+          # during azure function app creation by terraform.
+          # I wish the Terraform script does it and if its not, then you can follow the below storage account related things
+
+          # not need if "AzureWebJobsStorage" is already configured by Terraform Code. 
+          - task: AzureCLI@2
+            displayName: Retrieve Storage Account Details
+            name: az_storage_account
+            inputs:
+              azureSubscription: ${{ parameters.az_service_connection }}
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                storage_account_connection_string=$(az storage account show-connection-string --name $(var_az_storage_account) --resource-group $(var_az_storage_account_rg) --query connectionString -o tsv)
+                echo "##vso[task.setvariable variable=AZURE_STORAGE_CONNECTION_STRING;isOutput=true]$storage_account_connection_string"
+              visibleAzLogin: false
+              failOnStandardError: true
+
+          - task: AzureCLI@2
+            displayName: Uploads Secrets to Azure KV
+            inputs:
+              azureSubscription: ${{ parameters.az_service_connection }}
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                function update_secret() {
+                    vault_name="$1"
+                    secret_name="$2"
+                    secret_value="$3"
+
+                    echo
+                    echo "Checking secret $secret_name in Key Vault $vault_name.."
+
+                    # Check if the secret exists
+                    secretExists=$(az keyvault secret list --vault-name "$vault_name" --query "[?name=='$secret_name'].name" -o tsv)
+
+                    if [ -n "$secretExists" ]; then
+                        # Secret exists, retrieve its value
+                        kv_secret_value=$(az keyvault secret show --vault-name "$vault_name" --name "$secret_name" --query value -o tsv)
+
+                        # Encode both values to avoid direct string comparison issues
+                        encoded_kv_secret_value=$(echo -n "$kv_secret_value" | base64)
+                        encoded_secret_value=$(echo -n "$secret_value" | base64)
+
+                        if [ "$encoded_kv_secret_value" = "$encoded_secret_value" ]; then
+                            echo "KV value is the same as the provided secret value. Skipping update."
+                            return
+                        fi
+                        echo "KV value is different from the provided secret value. Updating..."
+                    else
+                        echo "Secret $secret_name does not exist in Key Vault. Creating it now..."
+                    fi
+
+                    # Create or update the secret
+                    echo "Uploading secret $secret_name to Key Vault $vault_name..."
+                    az keyvault secret set --name "$secret_name" --vault-name "$vault_name" --value "$secret_value" -o none
+                    echo "Secret $secret_name successfully uploaded!"
+                }
+                update_secret $(var_az_keyvault) code-ado-wi-gh-issue-sync-ado-token "$(var_ado_token)"
+                update_secret $(var_az_keyvault) code-ado-wi-gh-issue-sync-gh-token "$(var_gh_token)"
+
+                # not need if "AzureWebJobsStorage" is already configured by Terraform Code. 
+                update_secret $(var_az_keyvault) code-ado-wi-gh-issue-sync-fn-app-storage-account-conn-string "$(az_storage_account.AZURE_STORAGE_CONNECTION_STRING)"
+              visibleAzLogin: false
+              failOnStandardError: true
+
+          - task: AzureCLI@2
+            displayName: Configure Azure Function App HealthCheckPath
+            inputs:
+              azureSubscription: ${{ parameters.az_service_connection }}
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                #!/bin/bash
+
+                az webapp config set \
+                  --name "$(var_az_fn_app_name)" \
+                  --resource-group "$(var_az_fn_app_rg)" \
+                  --linux-fx-version "PYTHON|3.12" \
+                  --generic-configurations '{"healthCheckPath": "/api/health"}'
+              visibleAzLogin: false
+              failOnStandardError: true
+
+
+          # Skip the "AzureWebJobsStorage" and "AzureWebJobsDashboard" if already configured by Terraform Code in appsettings
+
+          # Deploy to Azure Function App
+          - task: AzureFunctionApp@2
+            displayName: 'Deploy Azure Function App'
+            inputs:
+              azureSubscription: ${{ parameters.az_service_connection }}
+              appType: 'functionAppLinux'
+              appName: '$(var_az_fn_app_name)'
+              package: '$(Pipeline.Workspace)/**/*.zip'
+              runtimeStack: 'PYTHON|3.12'
+              deploymentMethod: 'zipDeploy'
+              appSettings: >
+                -APPINSIGHTS_INSTRUMENTATIONKEY $(app_insights.APP_INSIGHTS_INSTRUMENTATION_KEY)
+                -APPLICATIONINSIGHTS_CONNECTION_STRING $(app_insights.APP_INSIGHTS_CONNECTION_STRING)
+                -WEBSITE_RUN_FROM_PACKAGE 1
+                -AzureWebJobsStorage "@Microsoft.KeyVault(VaultName=$(var_az_keyvault);SecretName=code-ado-wi-gh-issue-sync-fn-app-storage-account-conn-string)"
+                -AzureWebJobsDashboard "@Microsoft.KeyVault(VaultName=$(var_az_keyvault);SecretName=code-ado-wi-gh-issue-sync-fn-app-storage-account-conn-string)"
+                -GITHUB_ORG $(var_gh_org)
+                -ADO_ORG $(var_ado_org)
+                -GITHUB_TOKEN "@Microsoft.KeyVault(VaultName=$(var_az_keyvault);SecretName=code-ado-wi-gh-issue-sync-gh-token)"
+                -ADO_TOKEN "@Microsoft.KeyVault(VaultName=$(var_az_keyvault);SecretName=code-ado-wi-gh-issue-sync-ado-token)"
+
+          - bash: |
+              #!/bin/bash
+              # Simple Azure Function App Health Check Script
+
+              # Configuration
+              URL="${1:-https://$(var_az_fn_app_name).azurewebsites.net}"
+              MAX_RETRIES=10
+              DELAY=10
+
+              sleep 60s
+              echo "Testing health check: $URL/api/health"
+
+              # Health check with retries
+              for i in $(seq 1 $MAX_RETRIES); do
+                  echo "Attempt $i/$MAX_RETRIES..."
+                  
+                  if response=$(curl -s --max-time 30 "$URL/api/health" 2>/dev/null); then
+                      if [[ $(echo $response | jq -r '.status') = "healthy" ]]; then
+                          echo "✅ Health check passed!"
+                          exit 0
+                      fi
+                  fi
+                  
+                  echo "❌ Failed, retrying in ${DELAY}s..."
+                  sleep $DELAY
+              done
+
+              echo "🚫 Health check failed after $MAX_RETRIES attempts"
+              exit 1
+            displayName: 'Function App Health Check'
+            failOnStderr: true

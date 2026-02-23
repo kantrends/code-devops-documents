@@ -1,0 +1,53 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "aci_name": {
+            "value": "filevalidationcqdocdevaci"
+        },
+        "tags": {
+            "value": {
+                "BUSINESS_SERVICE": "CQDOC",
+                "Cost Tag": "Population Health Development_CQDOC - Coding Quality & Documentation_NP",
+                "ManagedBy": "Terraform",
+                "TEAMNAME": "CQDOC"
+            }
+        },
+        "user_assigned_identity": {
+            "value": "/subscriptions/807ab0e9-16d9-41e7-8f8d-9df19dbf6165/resourceGroups/CQDOCDEV-east/providers/Microsoft.ManagedIdentity/userAssignedIdentities/filevalidationcqdocdevacicqdocdevacrid"
+        },
+        "image_name": {
+            "value": "xxxxxxxxx"
+        },
+        "acr_login_server": {
+            "value": "cqdocdevacr.azurecr.io"
+        },
+        "file_share_name": {
+            "value": "cqdocdevshare"
+        },
+        "storage_account_name": {
+            "value": "generaldevgosu"
+        },
+        "storage_account_key": {
+            "value": "xxxxxxxx"
+        },
+        "log_analytics_workspace_id": {
+            "value": "74a66347-0443-4a64-b6ba-0861264d3d18"
+        },
+        "log_analytics_workspace_key": {
+            "value": "xxxxxxxxxxxxxxx"
+        },
+        "subnet_id": {
+            "value": "/subscriptions/807ab0e9-16d9-41e7-8f8d-9df19dbf6165/resourceGroups/RG_CQDOCNP_Common_East/providers/Microsoft.Network/virtualNetworks/VNET-CQDOCNP-EAST/subnets/CQDOCNP_eastdevacisubnet"
+        },
+        "env_cqdoc_validation_yml": {
+            "value": ""
+        },
+        "env_cqdoc_keytab": {
+            "value": ""
+        },
+        "env_spring_profiles_active": {
+            "value": "dev,docker"
+        }
+    }
+}

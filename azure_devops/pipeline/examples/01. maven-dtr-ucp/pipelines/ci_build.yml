@@ -1,0 +1,80 @@
+stages:
+- stage: ci
+  displayName: CI Build and Scan 
+  jobs:
+  - job: build
+    variables:
+    - group: docker-prod-creds # create this variable group in ADO and create two variables DOCKER_USERNAME & DOCKER_PASSWORD
+    displayName: Build 
+    steps:
+    - task: Maven@3
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'clean install docker:push' # provide goals which do docker push
+        javaHomeOption: 'path'
+        jdkDirectory: $(SYSTEM_JDK_17)
+        mavenVersionOption: 'path'
+        mavenPath: $(SYSTEM_MAVEN_3)
+        options: '-B -Ddtr.username=$(DOCKER_USERNAME) -Ddtr.password=$(DOCKER_PASSWORD)'
+
+    - publish: docker-compose.yml
+      artifact: pipeline_artifact
+      displayName: Publish Artifacts Docker Compose File
+
+  - job: set_properties
+    displayName: Set Properties
+    steps:
+    - bash: | 
+        groupId=$($MAVEN help:evaluate -Dexpression="project.groupId" -q -DforceStdout)
+        artifactId=$($MAVEN help:evaluate -Dexpression="project.artifactId" -q -DforceStdout)
+        version=$($MAVEN help:evaluate -Dexpression="project.version" -q -DforceStdout)
+
+        echo "##vso[task.setvariable variable=PROJECT_VERSION;isOutput=true]$version"
+        echo "##vso[task.setvariable variable=PROJECT_ARTIFACTID;isOutput=true]$artifactId"
+        echo "##vso[task.setvariable variable=PROJECT_GROUPID;isOutput=true]$groupId"
+      name: project_properties
+      displayName: Set Project Properties
+      env:
+        MAVEN: $(SYSTEM_MAVEN_3)
+        JAVA_HOME: $(SYSTEM_JDK_17)
+
+    - bash: |
+        set -eu
+        echo "Project Version: $(project_properties.PROJECT_VERSION)"
+        echo "Project Artifact ID: $(project_properties.PROJECT_ARTIFACTID)"
+        echo "Project Group ID: $(project_properties.PROJECT_GROUPID)"
+      displayName: Display Project Properties
+
+  - job: Nexuslifecycle_scan
+    displayName: Nexuslifecycle scan
+    dependsOn: set_properties
+    steps:
+    - task: Maven@4
+      displayName: Plugin
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'install com.sonatype.clm:clm-maven-plugin:index -Dclm.additionalScopes=provided'
+        options: '-B -e -Dno-docker -DskipTests'
+        javaHomeOption: 'Path'
+        jdkDirectory: $(SYSTEM_JDK_17)
+        mavenVersionOption: 'path'
+        mavenPath: $(SYSTEM_MAVEN_3)
+
+    - template: lifecycle-scan.yml@sdlc_templates
+      parameters:
+        IQ_API_TOKEN: $(IQ_API_TOKEN)
+        PROJECT_VERSION: "$(Build.BuildId)"
+        DISTRIBUTION: Hosted
+        ENABLE_CALLFLOW: true
+  
+  - job: checkmarx_scan
+    displayName: Checkmarx Scan
+    steps:
+    - template: checkmarx-scan.yml@sdlc_templates
+      parameters:
+        CHECKMARX_PASSWORD: "$(CHECKMARX_PASSWORD)"
+        PROJECT_NAME: "sandbox-maven-dtr-ucp"
+        PROJECT_VERSION: "$(Build.BuildId)"
+        TEAM: "sandbox"
+        # CHECKMARX_ARGUMENTS is optional.  Add it if you want to skip any files.
+        CHECKMARX_ARGUMENTS: -LocationPathExclude "grails-app/assets/javascripts,src/test,src/integration-test,grails-app/taglib/twitter/bootstrap" -LocationFilesExclude "**/grails-wrapper.jar"

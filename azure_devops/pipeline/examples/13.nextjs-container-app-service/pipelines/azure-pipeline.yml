@@ -1,0 +1,44 @@
+pool:
+  name: 'Premier linux Agents'
+
+resources:
+  repositories:
+    - repository: sdlc_templates
+      type: github
+      name: PremierInc/shield-ado-templates
+      endpoint: PremierInc
+
+trigger: none
+
+pr:
+  branches:
+    exclude:
+      - main
+      - release*
+
+variables:
+  - ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+      - name: VERSION_TAG
+        value: "$(Build.SourceVersion)"
+  - ${{ else }}:
+      - name: VERSION_TAG
+        value: 1.1.7-SNAPSHOT
+  - name: SERVICE_NAME
+    value: gatewayui
+  - name: NODE_VERSION
+    value: 20
+  - name: PNPM_VERSION
+    value: 9.6.0
+
+stages:
+  - template: ci.yml
+
+  - template: deploy.yml
+    parameters:
+      stage_name: DEV_Deploy
+      depends_on: ['ci']
+      ado_environment: 'azure-dev'
+      az_subscription_sc: "SC_ARM_MCE_NP"
+      deploy_variable_group: 'impaqtgateway-gatewayui-dev-azure'
+      blue_green: 'False'
+      condition: succeeded()

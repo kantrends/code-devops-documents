@@ -1,0 +1,107 @@
+trigger: none
+pr: none
+
+pool: Premier Linux Agents
+
+parameters:
+- name: appName
+  displayName: "Select App"
+  type: string
+  values:
+    - 'ems-app'
+    - 'ems-api'
+
+- name: environment
+  displayName: "Select Environment"
+  type: string
+  values:
+    - 'dev'
+    - 'devi'
+    - 'prd'
+
+- name: action
+  displayName: "Select Action"
+  type: string
+  default: 'restart'
+  values:
+    - restart
+    - start
+    - stop
+
+variables:
+# Azure Subscription Mapping
+- ${{ if eq(parameters.environment, 'prd') }}:
+  - name: azureSubscriptionSC
+    value: 'SC_EMS_Prd'
+- ${{ else }}:
+  - name: azureSubscriptionSC
+    value: 'SC_EMS_NP'
+
+# App Service and Resource Group Mapping
+
+- ${{ if eq(parameters.appName, 'ems-app') }}:
+  - ${{ if eq(parameters.environment, 'dev') }}:
+    - group: ems-app-dev
+  - ${{ if eq(parameters.environment, 'devi') }}:
+    - group: ems-app-devi2
+  - ${{ if eq(parameters.environment, 'prd') }}:
+    - group: ems-app-prd
+
+- ${{ if eq(parameters.appName, 'ems-api') }}:
+  - ${{ if eq(parameters.environment, 'dev') }}:
+    - group: EMS_API_DEV
+  - ${{ if eq(parameters.environment, 'devi') }}:
+    - group: EMS_API_DEVI2
+  - ${{ if eq(parameters.environment, 'prd') }}:
+    - group: EMS_API_PROD
+
+jobs:
+- deployment: ManageAppService
+  environment: ${{ parameters.environment }}
+  strategy:
+    runOnce:
+      deploy:
+        steps:
+        - task: AzureCLI@2
+          displayName: "Manage App Service Action"
+          inputs:
+            azureSubscription: $(azureSubscriptionSC)
+            scriptType: 'bash'
+            scriptLocation: 'inlineScript'
+            inlineScript: |
+              echo "App Service: $(var_az_app_service)"
+              echo "Resource Group: $(var_az_app_service_rg)"
+              echo "Executing action: ${{ parameters.action }}"
+              az webapp ${{ parameters.action }} --name $(var_az_app_service) --resource-group $(var_az_app_service_rg)
+              
+              # Wait for the action to complete
+
+              if [ "${{ parameters.action }}" == "restart" ]; then
+                echo "Waiting for the restart to complete..."
+                sleep 30  # Wait for 30 seconds 
+              elif [ "${{ parameters.action }}" == "start" ]; then
+                echo "Waiting for the app to start..."
+                sleep 30  
+              elif [ "${{ parameters.action }}" == "stop" ]; then
+                echo "Waiting for the app to stop..."
+                sleep 30  
+              fi
+
+              # Check the status of the web app after performing the action
+              if [ "${{ parameters.action }}" == "start" ] || [ "${{ parameters.action }}" == "restart" ]; then
+                status=$(az webapp show --name $(var_az_app_service) --resource-group $(var_az_app_service_rg) --query "state" -o tsv)
+                if [ "$status" == "Running" ]; then
+                  echo "App Service $(var_az_app_service) is now running."
+                else
+                  echo "App Service $(var_az_app_service) failed to start or restart. Current state: $status"
+                  exit 1  # Exit with an error code if the app is not running
+                fi
+              elif [ "${{ parameters.action }}" == "stop" ]; then
+                status=$(az webapp show --name $(var_az_app_service) --resource-group $(var_az_app_service_rg) --query "state" -o tsv)
+                if [ "$status" == "Stopped" ]; then
+                  echo "App Service $(var_az_app_service) is now stopped."
+                else
+                  echo "App Service $(var_az_app_service) failed to stop. Current state: $status"
+                  exit 1  # Exit with an error code if the app is not stopped
+                fi
+              fi

@@ -1,0 +1,65 @@
+---
+- name: "Create Required Directories"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+  loop:
+  - "{{ app_dir }}"
+  - "{{ app_logs_dir }}"
+
+- name: Download Application from Nexus
+  ansible.builtin.get_url:
+    url: "{{ app_download_url }}"
+    dest: "{{ app_location }}"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    force: true
+
+- name: "Create Startup Script {{ app_startup_script }}"
+  ansible.builtin.template:
+    src: "templates/startup.sh"
+    dest: "{{ app_startup_script }}"
+    owner: "{{ app_user }}"
+    group: "{{ app_group }}"
+    mode: "0755"
+
+- name: "Create Systemd file: {{ app_systemd_location }}"
+  ansible.builtin.template:
+    src: "templates/{{ app_name }}.service"
+    dest: "{{ app_systemd_location }}"
+    owner: root
+    group: root
+  register: service_updated
+
+- name: Daemon-reload if Systemd file is updated
+  ansible.builtin.shell:
+    cmd: systemctl daemon-reload
+  when: service_updated.changed 
+
+- name: Restart Service
+  ansible.builtin.service:
+    name: "{{ app_name }}"
+    enabled: yes 
+    state: restarted
+
+# configuring log rotation
+- name: "Create logrotate config file"
+  ansible.builtin.template:
+    src: "templates/{{ app_name }}.logrotate"
+    dest: "/etc/logrotate.d/{{ app_name }}"
+    mode: 644
+
+- name: Wait for 10 seconds
+  pause: 
+    seconds: 10
+    echo: no
+
+- name: Smoke Testing Health Check Api
+  ansible.builtin.uri:
+    url: https://localhost:8443/services/ping
+    method: GET
+    status_code: 200
+    body_format: json
+    validate_certs: false

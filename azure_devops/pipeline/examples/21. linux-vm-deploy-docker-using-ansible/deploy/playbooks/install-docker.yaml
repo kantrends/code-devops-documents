@@ -1,0 +1,78 @@
+---
+
+# This playbook installs and configure Docker
+
+- name: Add Docker Yum Repo
+  yum_repository:
+    name: docker-ce-repo
+    description: "Docker CE Stable"
+    baseurl: https://nexus.premierinc.com/artifacts/repository/docker/rhel/$releasever/$basearch/stable
+    gpgcheck: yes
+    gpgkey: https://nexus.premierinc.com/artifacts/repository/docker/rhel/gpg
+    enabled: true
+
+- name: Create /etc/docker directory
+  ansible.builtin.file:
+    path: /etc/docker
+    owner: root
+    group: root
+    mode: '0755'
+    state: directory
+
+- name: Copy file with owner and permissions
+  ansible.builtin.copy:
+    src: files/docker-daemon.json
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+
+- name: Install Docker Package
+  yum:
+    name:
+    - docker-ce
+    - docker-ce-cli
+    - containerd.io
+    state: latest
+    enablerepo: docker-ce-repo
+    update_cache: yes 
+
+- name: Start Docker Service
+  service: 
+    name: docker 
+    enabled: yes
+    state: started
+
+# In this example, we use the 'mce_adm' service account to docker group
+# So the app teams can run docker commands by switching to the user
+# This step is optional
+- name: Add 'mce_adm' user to 'docker' group 
+  user: 
+    name: mce_adm 
+    groups: docker 
+    append: yes
+
+########################################################
+# CLEAN ALL EXISTING DOCKER CONTAINER, IMAGES, VOLUMES #
+########################################################
+
+- name: Get Docker Usage Details
+  community.docker.docker_host_info:
+    containers: yes
+    images: yes
+    volumes: yes 
+    timeout: 300
+  register: docker_info
+
+
+# Removed all dangling docker stuff whichever is not in use. 
+# Does not affect the running containers & its images
+- name: Docker Prune everything
+  community.docker.docker_prune:
+    containers: yes
+    images: yes
+    images_filters: 
+      dangling: false 
+    networks: yes
+    volumes: yes
+    builder_cache: yes
+    timeout: 300

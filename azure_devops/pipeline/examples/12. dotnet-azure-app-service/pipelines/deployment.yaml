@@ -1,0 +1,186 @@
+parameters:
+- name: ado_environment
+- name: deploy_variable_group
+- name: stage_name
+- name: az_subscription_sc
+- name: blue_green
+  default: 'False'
+- name: depends_on
+  type: object
+  default: ['ci']
+- name: condition
+  default: succeeded()
+
+stages:
+- stage: ${{ parameters.stage_name }}
+  dependsOn: ${{ parameters.depends_on }}
+  condition: ${{ parameters.condition }}
+
+  variables:
+  - group: "${{ parameters.deploy_variable_group }}"
+  
+  jobs:
+  - deployment: deploy
+    environment: "${{ parameters.ado_environment }}"
+
+    variables:
+      ${{ if in(parameters.blue_green, 'False', 'false') }}:
+        APP_SERVICE_SLOT: 'production'
+      ${{ if in(parameters.blue_green, 'True', 'true') }}:
+        APP_SERVICE_SLOT: 'staging'
+
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+
+          - task: AzureCLI@2
+            displayName: Retrieve App Insights Details
+            name: app_insights
+            inputs:
+              azureSubscription: ${{ parameters.az_subscription_sc }}
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                app_insights_instrumentation_key=$(az resource show --resource-type "microsoft.insights/components" --query properties.InstrumentationKey -g $(var_app_insights_rg) -n $(var_app_insights))
+                app_insights_connection_string=$(az resource show --resource-type "microsoft.insights/components" --query properties.ConnectionString -g $(var_app_insights_rg) -n $(var_app_insights))
+                echo "##vso[task.setvariable variable=APP_INSIGHTS_INSTRUMENTATION_KEY;isOutput=true]$app_insights_instrumentation_key"
+                echo "##vso[task.setvariable variable=APP_INSIGHTS_CONNECTION_STRING;isOutput=true]$app_insights_connection_string"
+
+          # Stopping the app service before upgrading
+          - task: AzureAppServiceManage@0
+            displayName: Stop the App Service
+            inputs:
+              azureSubscription:  ${{ parameters.az_subscription_sc }} 
+              ResourceGroupName: $(var_az_app_service_rg)
+              WebAppName: $(var_az_app_service)
+              Action: 'Stop Azure App Service' 
+              SpecifySlotOrASE: true
+              Slot: '$(APP_SERVICE_SLOT)'
+
+          - task: AzureAppServiceSettings@1
+            displayName: Updating App Settings
+            inputs:
+              azureSubscription: ${{ parameters.az_subscription_sc }}
+              appName: $(var_az_app_service)
+              resourceGroupName: $(var_az_app_service_rg)
+              slotName: '$(APP_SERVICE_SLOT)'
+              appSettings: |
+                [
+                  {
+                    "name": "ASPNETCORE_ENVIRONMENT",
+                    "value": "$(ASPNETCORE_ENVIRONMENT)"
+                  },
+                  {
+                    "name": "PORT",
+                    "value": "8080"
+                  },
+                  {
+                    "name": "ASPNETCORE_HTTP_PORTS",
+                    "value": "8080"
+                  }
+                ]
+              # This is mandatory to set the Azure App Service Stack.
+              generalSettings: |
+                [
+                  {
+                    "linuxFxVersion": "DOTNETCORE|8.0",
+                    "healthCheckPath": ""
+                  }
+                ]
+              connectionStrings: |
+                [
+                  {
+                    "name": "DatabaseConnection",
+                    "value": "$(DB_CONNECTION_STRING)",
+                    "type": "SQLAzure"
+                  }
+                ]
+
+          - task: AzureRmWebAppDeployment@4
+            inputs:
+              ConnectionType: 'AzureRM'
+              azureSubscription: ${{ parameters.az_subscription_sc }}
+              ResourceGroupName: $(var_az_app_service_rg)
+              WebAppName: $(var_az_app_service)
+              appType: 'webAppLinux'
+              deployToSlotOrASE: true
+              SlotName: '$(APP_SERVICE_SLOT)'
+              packageForLinux: '$(Pipeline.Workspace)/**/*.zip'
+              RuntimeStack: "DOTNETCORE|8.0"
+              # we are having app insights related settings alone here as the $(app_insights.var) is not working in previous task properly.
+              AppSettings: >
+                -APPINSIGHTS_INSTRUMENTATIONKEY $(app_insights.APP_INSIGHTS_INSTRUMENTATION_KEY)
+                -APPLICATIONINSIGHTS_CONNECTION_STRING $(app_insights.APP_INSIGHTS_CONNECTION_STRING)
+                -ApplicationInsightsAgent_EXTENSION_VERSION ~3
+
+          # Only active slots can be swapped. Hence starting the standyby slot if not started already
+          - task: AzureAppServiceManage@0
+            displayName: Start the App Service if not started properly
+            inputs:
+              azureSubscription:  ${{ parameters.az_subscription_sc }} 
+              ResourceGroupName: $(var_az_app_service_rg)
+              WebAppName:  $(var_az_app_service)
+              Action: 'Start Azure App Service' 
+              SpecifySlotOrASE: true
+              Slot: '$(APP_SERVICE_SLOT)'
+
+# in blue green model, first app is deploy to "staging" slot.  
+# If all looks good, do a LB switch to "production" slot
+- ${{ if in(parameters.blue_green, 'True', 'true') }}:
+  - stage: ${{ parameters.stage_name }}_GREEN_LIVE
+    condition: ${{ parameters.condition }}
+    dependsOn: ${{ parameters.stage_name }}
+    jobs:
+    - deployment: switch_slots
+      environment: "${{ parameters.ado_environment }}"
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - download: none 
+
+            # Only active slots can be swapped. 
+            # Hence starting the standyby slot if not started already
+            - task: AzureAppServiceManage@0
+              displayName: Start the Standby Slot
+              inputs:
+                azureSubscription:  ${{ parameters.az_subscription_sc }} 
+                ResourceGroupName: $(var_az_app_service_rg)
+                WebAppName: $(var_az_app_service)
+                Action: 'Start Azure App Service' 
+                SpecifySlotOrASE: true
+                Slot: 'staging'
+
+            # Starting the production slot
+            - task: AzureAppServiceManage@0
+              displayName: Start the Production Slot
+              inputs:
+                azureSubscription:  ${{ parameters.az_subscription_sc }} 
+                ResourceGroupName: $(var_az_app_service_rg)
+                WebAppName: $(var_az_app_service)
+                Action: 'Start Azure App Service' 
+                SpecifySlotOrASE: true
+                Slot: 'production'
+
+            # Switch Slots Staging <-> Production
+            - task: AzureAppServiceManage@0
+              inputs:
+                azureSubscription: ${{ parameters.az_subscription_sc }}
+                ResourceGroupName: $(var_az_app_service_rg)
+                WebAppName: $(var_az_app_service)
+                Action: 'Swap Slots'
+                SourceSlot: 'staging'
+                PreserveVnet: true
+                SwapWithProduction: true
+
+            # Stopping the standby slot for saving resources. 
+            - task: AzureAppServiceManage@0
+              displayName: Stop the Standby Slot
+              inputs:
+                azureSubscription:  ${{ parameters.az_subscription_sc }} 
+                ResourceGroupName: $(var_az_app_service_rg)
+                WebAppName: $(var_az_app_service)
+                Action: 'Stop Azure App Service' 
+                SpecifySlotOrASE: true
+                Slot: 'staging'

@@ -1,0 +1,54 @@
+# Pipeline URL: https://dev.azure.com/premierinc/MII/_build?definitionId=2749&_a=summary
+
+trigger: none
+pr: none
+
+pool: 'Premier Linux Agents'
+
+resources:
+  repositories:
+    - repository: sdlc_templates
+      type: github
+      name: PremierInc/shield-ado-templates
+      endpoint: PremierInc
+      
+stages:
+- template: ci.yaml
+
+- template: deploy.yaml
+  parameters:
+    stage_name: DEV_DEPLOY
+    depends_on: ['ci']
+    ado_environment: 'azure-dev'
+    az_subscription_sc: 'SC_ARM_ABI_NP'
+    deploy_variable_group: 'mii-supply-chain-analytics-dev'
+
+- template: deploy.yaml
+  parameters:
+    stage_name: QA_DEPLOY
+    depends_on: ['ci']
+    ado_environment: 'azure-qa'
+    az_subscription_sc: 'SC_ARM_ABI_NP'
+    deploy_variable_group: 'mii-supply-chain-analytics-qa'
+
+- template: deploy.yaml
+  parameters:
+    stage_name: UAT_DEPLOY
+    depends_on: ['ci']
+    ado_environment: 'azure-uat'
+    az_subscription_sc: 'SC_ARM_ABI_PRD'
+    deploy_variable_group: 'mii-supply-chain-analytics-uat'
+    # only main and release branch goes to uat
+    # condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'),startsWith(variables['Build.SourceBranch'], 'refs/heads/release')))
+
+- template: deploy.yaml
+  parameters:
+    stage_name: PROD_DEPLOY
+    depends_on: ['ci']
+    ado_environment: 'azure-prod'
+    az_subscription_sc: 'SC_ARM_ABI_PRD'
+    deploy_variable_group: 'mii-supply-chain-analytics-prod'
+    # only main and release branch goes to prod
+    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'),startsWith(variables['Build.SourceBranch'], 'refs/heads/release')))
+
+    

@@ -1,0 +1,45 @@
+# pipeline url: 
+
+pool: Premier Linux Agents
+
+resources:
+  repositories:
+    - repository: sdlc_templates
+      type: github
+      name: PremierInc/shield-ado-templates
+      endpoint: PremierInc
+
+trigger:
+  branches:
+    exclude:
+      - main
+      - release*
+
+pr:
+  branches:
+      exclude:
+      - main
+      - release*
+
+variables:
+  NODE_VERSION: 24
+  AZ_APP_SERVICE_RUNTIME_STACK: 'NODE|24-lts'
+  PNPM_VERSION: 10.20.0
+
+stages:
+- template: ci.yaml
+- template: deploy.yaml
+  parameters:
+    stage_name: 'deployDev'
+    ado_environment: 'qualadv-webui-dev'
+    variable_group: 'qualadv-webui-dev'
+    az_subscription_sc: 'SC_ARM_QUALADV_NP'
+    depends_on: [ 'ci' ]
+
+- template: deploy.yaml
+  parameters:
+    stage_name: 'deployQa'
+    ado_environment: 'qualadv-webui-qa'
+    variable_group: 'qualadv-webui-qa'
+    az_subscription_sc: 'SC_ARM_QUALADV_NP'
+    depends_on: [ 'ci' ]

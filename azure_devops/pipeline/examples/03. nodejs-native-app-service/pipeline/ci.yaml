@@ -1,0 +1,52 @@
+stages:
+- stage: ci
+
+  jobs:
+  - job: Build
+    steps:
+    - task: NodeTool@0
+      displayName: Install NodeJS
+      inputs:
+        versionSpec: $(NODE_VERSION)
+        nodejsMirror: https://nexus.premierinc.com/artifacts/repository/nodejs/
+      
+    - bash: |
+        set -x
+        npm install pnpm@$(PNPM_VERSION) -g
+        pnpm config set registry https://nexus.premierinc.com/artifacts/repository/npm/
+        pnpm i --shamefully-hoist --frozen-lockfile
+      displayName: Install dependencies
+
+    - bash: pnpm run build
+      displayName: Build all packages
+
+    - bash: |
+        echo "Clearing node_modules directory"
+        find . -type d -name "node_modules" -prune -exec rm -rf '{}' +
+
+        echo "Installing Production dependencies only"
+        pnpm i --shamefully-hoist --frozen-lockfile --prod 
+      displayName: Prepare Artifact
+
+    - task: ArchiveFiles@2
+      displayName: Archive runtime artifact
+      inputs:
+        rootFolderOrFile: '$(Build.SourcesDirectory)'
+        includeRootFolder: false
+        archiveType: zip
+        archiveFile: '$(Build.ArtifactStagingDirectory)/drop.zip'
+        replaceExistingArchive: true
+
+    - publish: '$(Build.ArtifactStagingDirectory)/drop.zip'
+      artifact: drop-$(Build.BuildId)
+
+  - job: security_scan
+    displayName: Security Scan
+    variables:
+      - group: 'SDLC Credentials'
+    steps:
+      - template: lifecycle-scan.yml@sdlc_templates
+        parameters:
+          IQ_API_TOKEN: $(IQ_API_TOKEN)
+          ARTIFACT_VERSION: "$(Build.BuildId)"
+          DISTRIBUTION: Hosted

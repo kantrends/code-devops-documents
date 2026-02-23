@@ -1,0 +1,4 @@
+fastapi
+gunicorn
+urllib3
+uvicorn

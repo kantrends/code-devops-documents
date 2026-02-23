@@ -1,0 +1,73 @@
+parameters: 
+- name: stage_name 
+- name: depends_on 
+  type: object 
+  default: ['ci']
+- name: ado_environment
+- name: az_subscription_sc 
+- name: deploy_variable_group
+- name: condition
+  default: succeeded()
+  
+stages:
+- stage: ${{ parameters.stage_name }} 
+  dependsOn: ${{ parameters.depends_on }}
+  condition: ${{ parameters.condition }}
+  variables:
+  - group: ${{ parameters.deploy_variable_group }}
+  - name: APP_VERSION
+    value: $[ stageDependencies.ci.set_properties.outputs['project_properties.PROJECT_VERSION'] ]
+  - name: ARTIFACTID
+    value: $[ stageDependencies.ci.set_properties.outputs['project_properties.PROJECT_ARTIFACTID'] ]
+  - name: GROUPID
+    value: $[ stageDependencies.ci.set_properties.outputs['project_properties.PROJECT_GROUPID'] ]
+  jobs:
+  - deployment: deploy 
+    environment: ${{ parameters.ado_environment }}
+    variables: 
+      ACR_IMAGE_NAME: "$(var_acr_name).azurecr.io/$(ARTIFACTID):$(APP_VERSION)"
+      ACR_LATEST_IMAGE: "$(var_acr_name).azurecr.io/$(ARTIFACTID):latest"
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - bash: | 
+              docker image load -i image.tar
+              echo "$(ARTIFACTID):$(APP_VERSION)"
+              docker image tag  $(ARTIFACTID):$(APP_VERSION) $(ACR_IMAGE_NAME)
+              docker image tag $(ARTIFACTID):$(APP_VERSION) $(ACR_LATEST_IMAGE)
+            workingDirectory: $(Pipeline.Workspace)/docker_image
+            displayName: Tag Image
+
+          - task: AzureCLI@2
+            displayName: Push Image to ACR
+            inputs:
+              azureSubscription: ${{ parameters.az_subscription_sc }}
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # az login --identity
+                az acr login --name $(var_acr_name)
+                docker image push $(ACR_IMAGE_NAME)
+                docker image push $(ACR_LATEST_IMAGE)
+
+          - task: AzureResourceManagerTemplateDeployment@3
+            inputs:
+              deploymentScope: 'Resource Group'
+              azureResourceManagerConnection: ${{ parameters.az_subscription_sc }}
+              subscriptionId: '$(var_az_subscription)'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: 'CQDOCDEV-east'
+              location: "$(var_az_location)"
+              templateLocation: 'Linked artifact'
+              csmFile: '$(Pipeline.Workspace)/deploy/template.json'
+              csmParametersFile: '$(Pipeline.Workspace)/deploy/$(var_arm_parameter_file)'
+              overrideParameters: >
+                -storage_account_key "$(var_storage_account_key)"
+                -log_analytics_workspace_key "$(var_log_analytics_workspace_key)"
+                -env_cqdoc_validation_yml "$(var_cqdoc_validation_yml)"
+                -env_cqdoc_keytab "$(var_cqdoc_keytab)"
+                -env_spring_profiles_active "$(var_spring_profiles_active)"
+                -image_name "$(ACR_IMAGE_NAME)"
+              deploymentMode: 'Incremental'   
+                

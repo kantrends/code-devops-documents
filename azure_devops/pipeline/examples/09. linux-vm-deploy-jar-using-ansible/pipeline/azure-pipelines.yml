@@ -1,0 +1,44 @@
+## AE PROVISION PIPELINE
+
+pool:
+  name: 'Premier Linux Agents'
+
+resources:
+  repositories:
+    - repository: sdlc_templates
+      type: github
+      name: PremierInc/shield-ado-templates
+      endpoint: PremierInc
+
+trigger:
+  branches:
+    exclude:
+      - main*
+      - release*
+
+pr:
+  branches:
+    exclude:
+      - main*
+      - release*
+
+stages:
+- template: ci.yml
+
+- template: vm-deploy.yml
+  parameters:
+    stage_name: NonProd 
+    condition: succeeded()
+    depends_on: ['ci']
+    ado_environment: ae-provision-np
+    app_variablegroup: ae-provision-np
+    ansible_private_key_file_secure_library: 'ansible_c3quaeprov1'
+
+# - template: vm-deploy.yml
+#   parameters:
+#     stage_name: NonProd 
+#     condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'), startsWith(variables['Build.SourceBranch'], 'refs/heads/release/')))
+#     depends_on: ['ci']
+#     ado_environment: ae-provision-prod
+#     app_variablegroup: ae-provision-prod
+#     ansible_private_key_file_secure_library: 'ansible_c2puaeprov1'

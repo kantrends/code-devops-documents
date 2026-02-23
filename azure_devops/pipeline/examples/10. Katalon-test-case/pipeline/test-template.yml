@@ -1,0 +1,82 @@
+parameters:
+  - name: test_suite_collection_path
+  - name: test_case_type
+    default: Regression
+  - name: Environment
+  - name: send_email
+    default: True
+
+jobs:
+  - job: ui_test # do not change this name as it is referenced in email report job
+    displayName: UI Test
+    timeoutInMinutes: 480
+
+    variables:
+      - name: KATALON_DOCKER_IMAGE
+        value: "katalonstudio/katalon:8.6.0"
+
+    steps:
+      - bash: |
+          echo "##Info: Kill Katalon container if present already.. "
+          if [ "$(docker container ls -a | grep katalon-test-case)" ]
+          then
+          docker container rm -f katalon-test-case
+          else
+          echo "no container"
+          fi
+          
+          echo "##Info: Running Katalon container to run test cases .."
+          docker run --name katalon-test-case \
+          -e DISPLAY_CONFIGURATION="1920x1080x24" \
+          -e DISPLAY=":99" \
+          -v "$(pwd)":/katalon/katalon/source \
+          $(KATALON_DOCKER_IMAGE) katalonc.sh \
+          -projectPath=/katalon/katalon/source \
+          -noSplash -consoleLog \
+          -browserType="Edge Chromium" \
+          --config -webui.autoUpdateDrivers=true \
+          -retry=0 -statusDelay=30 -testSuiteCollectionPath="$test_suite_collection_path" \
+          -apiKey="4ff3dfd8-f5b8-46e5-8ded-0df5c706c609"
+          
+          ls -la
+          docker container cp katalon-test-case:/katalon/katalon/source/Reports .
+          ls -la Reports/
+          docker container rm -f katalon-test-case
+        displayName: Run Katalon Test Cases
+        continueOnError: true
+        env:
+          test_suite_collection_path: "${{ parameters.test_suite_collection_path }}"
+
+
+      - task: PublishTestResults@2
+        displayName: Publish Test Results
+        inputs:
+          testResultsFormat: 'JUnit'
+          testResultsFiles: '**/${{ parameters.test_case_type }} Testcases/**/JUnit_Report.xml'
+          searchFolder: '$(System.DefaultWorkingDirectory)/Reports'
+
+      - publish: Reports
+        artifact: <Artifact name>
+        displayName: Publish Artifacts
+
+
+  - ${{ if eq(parameters.send_email, True) }}:
+      - job: EmailReport
+        pool:
+          name: 'Premier Windows Agents'
+        displayName: Send Auto Email
+        dependsOn: ['ui_test']
+        steps:
+          - task: EmailReport@1
+            inputs:
+              sendMailConditionConfig: 'Always'
+              subject: '[{environmentStatus}] {passPercentage} tests passed in Automation ${{ parameters.test_case_type }} Test for env ${{ parameters.Environment }}'
+              toAddress: '<provide To email address>'
+              defaultDomain: 'premierinc.com'
+              groupTestResultsBy: 'run'
+              includeCommits: true
+              maxTestFailuresToShow: '15'
+              includeOthersInTotal: false
+              usePreviousEnvironment: false
+              enableTLS: true
+              smtpConnectionEndpoint: '<service connection to send email reports>'

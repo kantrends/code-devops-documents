@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  app1:
+    image: dtr.premierinc.com/code_org/app1:${APP_VERSION}
+    environment:
+    - DB_USER=${DB_USER}
+    - DB_PASS=${DB_PASS}
+    deploy:
+      mode: replicated
+      replicas: 3
+      labels:
+      - "com.docker.ucp.access.label=/Shared/code"

@@ -1,0 +1,49 @@
+# values specific to custom helm chart of this repo
+akv:
+  tenantId: b110eddf-23ae-457c-a6f3-734d592b2847
+  # Run the below command to get the clientId of your cluster
+  # or directly get this from Cloud DevOps Team
+  # az aks show --resource-group  "RESOURCEGROUP" --name "AKS_cluster_NAME" --query addonProfiles.azureKeyvaultSecretsProvider.identity
+  clientId: XXXXXX
+  keyVaultName: 'Empty overridden by pipeline'
+  certName: 'Empty overridden by pipeline'
+
+# values specific to ingress-nginx helm chart
+ingress-nginx:
+  controller:
+    replicaCount: 5
+    nodeSelector:
+      agentpool: systempool
+    service:
+      loadBalancerIP: 100.73.101.73 # pickup one IP from the AKS subnet
+      annotations:
+        service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+        service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthz
+
+    # This is for using custom SSL Certificate for Nginx instead of default Nginx Self Signed Certificate
+    extraArgs:
+      default-ssl-certificate: ingress-nginx/ingress-tls-csi
+
+    extraVolumes:
+      - name: secrets-store-inline
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: "azure-tls"
+    extraVolumeMounts:
+      - name: secrets-store-inline
+        mountPath: "/mnt/secrets-store"
+        readOnly: true
+
+    # NOTE: All the below items are needed only if you are going to deploy multiple ingress controller on same AKS cluster
+    #       In addition to below items, you need to update the chart release name & namespace values in azure-pipeline.yaml file
+
+    # electionID: ingress-controller-leader-dev
+    # ingressClass: internal-nginx-dev  # default: nginx
+    # ingressClassResource:
+    #   name: internal-nginx-dev # default: nginx
+    #   enabled: true
+    #   default: false
+    #   controllerValue: "k8s.io/internal-ingress-nginx" 
+

@@ -1,0 +1,48 @@
+pool: Premier Linux Agents
+
+trigger: none
+pr: none
+
+parameters:
+- name: np
+  type: boolean
+  default: false
+
+- name: perf
+  type: boolean
+  default: false
+
+- name: prod
+  type: boolean
+  default: false
+
+stages:
+- template: deploy.yml
+  parameters:
+    stage_name: NP_Deploy
+    ado_environment: np
+    azure_subscription_sc: 'your-service-connection'
+    databricks_env: np
+    variable_group: 'variable group name' # Must store databricks oauth client secret in this variable group
+    condition: eq('${{ parameters.np }}', true)
+
+- template: deploy.yml
+  parameters:
+    stage_name: Perf_Deploy
+    ado_environment: perf
+    azure_subscription_sc: 'your-service-connection'
+    databricks_env: perf
+    variable_group: 'variable group name' # Must store databricks oauth client secret in this variable group
+    condition: eq('${{ parameters.perf }}', true)
+
+- template: deploy.yml
+  parameters:
+    stage_name: Prod_Deploy
+    ado_environment: prod
+    azure_subscription_sc: 'your-service-connection'
+    databricks_env: prod
+    variable_group: 'variable group name' # Must store databricks oauth client secret in this variable group
+    condition: and(
+                eq('${{ parameters.prod }}', true), 
+                eq(variables['Build.SourceBranch'], 'refs/heads/main')
+                )

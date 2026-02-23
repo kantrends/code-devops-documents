@@ -1,0 +1,70 @@
+parameters:
+- name: dependsOn 
+  default: ['ci']
+  type: object
+
+- name: target_environment
+  default: ''
+  values: ['dev', 'qa', 'uat', 'prod']
+
+- name: ado_environment
+  default: ''
+
+- name: docker_variable_group
+  default: docker-np-creds
+
+- name: environment_variable_group
+  default: ''
+
+- name: stack_name 
+  default: ''
+
+- name: ucp_cluster 
+  default: cl1-ucp-np 
+
+
+stages:
+- stage: "${{ parameters.target_environment }}_deploy"
+  displayName: ${{ upper(parameters.target_environment) }} Deploy
+  pool: "Premier Linux Agents"
+
+  dependsOn: ${{ parameters.dependsOn }}
+
+  variables:
+  - group: ${{ parameters.docker_variable_group }}        # contains DOCKER_USERNAME & DOCKER_PASSWORD which is needed for UCP authentication
+  - group: ${{ parameters.environment_variable_group }}   # container variables required for specific environments like DEV, QA
+  - name: PROJECT_VERSION
+    value: $[ stagedependencies.ci.set_properties.outputs['project_properties.PROJECT_VERSION'] ]
+
+  jobs:
+  - deployment: ucp_deploy
+    environment: ${{ parameters.ado_environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - bash: |
+              set -eu 
+
+              AUTH_TOKEN=$(curl -sk -d '{"username":"'"${UCP_USERNAME}"'","password":"'"${UCP_PASSWORD}"'"}' "https://${UCP_CLUSTER}.premierinc.com/auth/login" | jq -r .auth_token)
+              curl -k -H "Authorization: Bearer $AUTH_TOKEN" "https://${UCP_CLUSTER}.premierinc.com/api/clientbundle" -o bundle.zip
+              unzip bundle.zip
+              eval "$(<env.sh)"
+              ls -la
+
+              docker login -u "${UCP_USERNAME}" -p "${UCP_PASSWORD}" dtr.premierinc.com
+              docker-compose config
+              docker stack deploy -c docker-compose.yml --with-registry-auth "${STACK_NAME}"
+              docker logout dtr.premierinc.com
+              
+            displayName: Deploy to UCP
+            workingDirectory: $(Pipeline.Workspace)/pipeline_artifact # pipeline artifacts are downloaded to Pipeline.Workspace directory
+            
+            env:
+              APP_VERSION: $(PROJECT_VERSION)
+              UCP_USERNAME: $(DOCKER_USERNAME)
+              UCP_PASSWORD: $(DOCKER_PASSWORD)
+              UCP_CLUSTER: ${{ parameters.ucp_cluster }}
+              STACK_NAME: ${{ parameters.stack_name }}
+              DB_NAME: $(DB_NAME)   # DB_NAME is set in the variable group
+              DB_PASS: $(DB_PASS)   # DB_PASS is set in the variable group

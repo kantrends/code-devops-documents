@@ -1,0 +1,92 @@
+stages:
+- stage:  ci
+  displayName: Measure Manager CI
+  jobs:
+  - job: set_properties
+    displayName: Set Properties
+    steps:
+    - bash: | 
+        chmod +x ./gradlew ; ./gradlew --version
+        artifactId="measuremanager"
+        version=$(./gradlew -q printVersion)
+        echo "##vso[task.setvariable variable=PROJECT_VERSION;isOutput=true]$version"
+        echo "##vso[task.setvariable variable=PROJECT_ARTIFACTID;isOutput=true]$artifactId"
+      name: project_properties
+      displayName: Set Project Properties
+      env:
+        JAVA_HOME: $(SYSTEM_JDK_17)
+
+    - bash: |
+        set -eu
+        echo "Project Version: $(project_properties.PROJECT_VERSION)"
+        echo "Project Artifact ID: $(project_properties.PROJECT_ARTIFACTID)"
+      displayName: Display Project Properties
+      
+  - job: Build
+    variables:
+      # we are using DTR credentials from this group
+      # once we are away from DTR in base image, remove this library group
+      - group: impaqtgateway-measure_manager-build
+      # needed for Security Scans
+      - group: SDLC Credentials
+    steps:
+    - bash: chmod +x ./gradlew
+      displayName: Provide exe to Gradle Wrapper
+    
+    - bash: ./gradlew --build-cache --info --stacktrace jibBuildTar
+      displayName: Build Docker Image 
+      env: 
+        JAVA_HOME: $(SYSTEM_JDK_17)
+        DOCKER_USERNAME: "$(DDC_USERNAME_PROD)"
+        DOCKER_PASSWORD: "$(DDC_PASSWORD_PROD)"
+
+    - publish: build/jib-image.tar
+      artifact: docker_image
+      displayName: Publish Artifacts
+
+    # This is not scanning the Kotlin files properly.
+    # Fix this with the help of Application Security team later
+    - template: lifecycle-scan.yml@sdlc_templates
+      parameters:
+        IQ_API_TOKEN: $(IQ_API_TOKEN)
+        ARTIFACT_VERSION: "$(Build.BuildId)"
+        DISTRIBUTION: Hosted
+        SCAN_TARGETS: ["'*.gradle*'", "'**/*.kt'", "'**/*.jar'"]
+
+  - job: SonarQubeAnalysis
+    displayName: 'Build and SonarQube Analysis'
+    condition: eq(variables['Build.SourceBranch'],'refs/heads/main')
+    steps:
+          - checkout: self
+          
+          # Step 1: Prepare SonarQube analysis
+          - task: SonarQubePrepare@6
+            inputs:
+              SonarQube: 'sonarqube-ce'  
+              scannerMode: 'CLI'
+              configMode: 'file'  
+              extraProperties: |
+                sonar.projectKey='your-project-key'
+                sonar.projectName='your-project-name'
+                sonar.java.binaries=gradle-project/build/classes//java/main
+
+          # Step 2: Run Gradle build with SonarQube analysis
+          - script: |
+              chmod +x ./gradlew
+              ./gradlew build 
+            displayName: 'Run Gradle Build'
+            env:
+              JAVA_HOME: $(SYSTEM_JDK_17)
+      
+
+          # Step 3: Publish SonarQube quality gate results
+          - task: SonarQubeAnalyze@6
+            displayName: 'Run SonarQube Analysis'
+            env:
+              JAVA_HOME: $(SYSTEM_JDK_17)
+
+          # Step 4: Publish the quality gate result
+          - task: SonarQubePublish@6
+            displayName: 'Publish Quality Gate Result'
+            inputs:
+              pollingTimeoutSec: '300'

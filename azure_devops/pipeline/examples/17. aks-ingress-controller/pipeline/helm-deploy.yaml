@@ -1,0 +1,70 @@
+parameters:
+- name: environment
+- name: azureSubscription
+- name: azureResourceGroup
+- name: kubernetesCluster
+- name: namespace
+- name: chartValueFile
+- name: chartReleaseName
+# remove the below if you are not going to use premier SSL Cert 
+- name: ssl_cert_secure_file
+- name: keyVaultName
+
+jobs:
+- deployment: DeployHelmChart
+  displayName: Install/Upgrade Helm Charts
+  pool: 'Premier Linux Agents'
+  environment: ${{ parameters.environment }}
+  strategy:
+    runOnce:
+      deploy:
+        steps:
+        - checkout: self
+
+        # remove this step if you are not going to use premier SSL Cert 
+        - task: DownloadSecureFile@1
+          displayName: 'Download SSL Certificate Secure File'
+          inputs:
+            secureFile: ${{ parameters.ssl_cert_secure_file }}
+
+        # remove this step if you are not going to use premier SSL Cert 
+        - task: AzureCLI@2
+          displayName: 'Upload SSL Certificate to Azure Key Vault'
+          inputs:
+            azureSubscription: ${{ parameters.azureSubscription }}
+            scriptType: bash
+            scriptLocation: inlineScript
+            inlineScript: |
+              # Define variables
+              SECURE_FILE_PATH=$(Agent.TempDirectory)/${{ parameters.ssl_cert_secure_file }}
+              KEY_VAULT_NAME=${{ parameters.keyVaultName }}
+              CERT_NAME=code-ingress-aks-ssl-cert # az keyvault certificate name
+
+              # Upload the certificate to Azure Key Vault
+              az keyvault certificate import \
+                --vault-name $KEY_VAULT_NAME \
+                --name $CERT_NAME \
+                --file $SECURE_FILE_PATH
+
+        - task: HelmInstaller@1
+
+        - bash: helm dependency update
+          displayName: Download helm dependencies 
+          workingDirectory: aks-ingress-controller
+
+        - task: HelmDeploy@1
+          displayName: 'Deploy Helm Chart'
+          inputs:
+            connectionType: Azure Resource Manager
+            azureSubscription: ${{ parameters.azureSubscription }}
+            azureResourceGroup: ${{ parameters.azureResourceGroup }}
+            kubernetesCluster: ${{ parameters.kubernetesCluster }}
+            command: upgrade
+            # remove the "set" options if you are not going to use premier SSL Cert 
+            arguments: '--create-namespace --set akv.keyVaultName=${{ parameters.keyVaultName }} --set akv.certName=code-ingress-aks-ssl-cert'
+            namespace: ${{ parameters.namespace }}
+            chartType: FilePath
+            chartPath: './aks-ingress-controller'
+            releaseName: ${{ parameters.chartReleaseName }}
+            valueFile: ${{ parameters.chartValueFile }}
+          

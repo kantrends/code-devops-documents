@@ -1,0 +1,8 @@
+# Main playbook which runs first
+- hosts: "{{ deploy_environment }}" 
+  gather_facts: false
+  tasks:
+  - import_tasks: install-java.yaml
+  - import_tasks: install-app.yaml
+
+      

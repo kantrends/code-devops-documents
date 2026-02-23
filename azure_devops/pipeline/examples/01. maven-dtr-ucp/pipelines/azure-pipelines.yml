@@ -1,0 +1,62 @@
+# Pipeline for Maven Project that deploys Docker Images to UCP.
+name: $(BuildId)
+
+pool: 
+  name: Premier Linux Agents
+  # project requires these two environment variables. So choose agent that satisfies this condition
+  depends:          
+  - SYSTEM_MAVEN_3
+  - SYSTEM_JDK_17
+
+# Mandatory if you configure blackduck & checkmarx scan.
+resources:
+  repositories:
+    - repository: sdlc_templates
+      type: github
+      name: PremierInc/shield-ado-templates
+      endpoint: PremierInc
+
+stages:
+# template file that contains jobs for ci build and scan
+- template: ci_build.yml     
+
+# template file contains steps for UCP deployment
+- template: deploy.yml        
+  parameters:
+    dependsOn: ['ci']         # depends on previous stage. mandatory as we are using PROJECT_VERSION from ci stage
+    target_environment: dev 
+    ado_environment: maven-dtr-ucp-dev
+    docker_variable_group: docker-np-creds
+    environment_variable_group: maven-dtr-ucp-dev-creds   # variable group contains DB_USER & DB_PASS variables.
+    stack_name: 'SANDBOX_DEV'
+    ucp_cluster: 'cl1-ucp-np'
+            
+- template: deploy.yml 
+  parameters:
+    dependsOn: ['ci', 'dev_deploy']     # depends on previous stage. mandatory as we are using PROJECT_VERSION from ci stage
+    target_environment: qa 
+    ado_environment: maven-dtr-ucp-qa
+    docker_variable_group: docker-np-creds
+    environment_variable_group: maven-dtr-ucp-qa-creds
+    stack_name: 'SANDBOX_QA'
+    ucp_cluster: 'cl1-ucp-np'             
+
+- template: deploy.yml 
+  parameters:
+    dependsOn: ['ci', 'qa_deploy']    # depends on previous stage. mandatory as we are using PROJECT_VERSION from ci stage
+    target_environment: uat
+    ado_environment: maven-dtr-ucp-uat
+    docker_variable_group: docker-prod-creds
+    environment_variable_group: maven-dtr-ucp-uat-creds
+    stack_name: 'SANDBOX_UAT'
+    ucp_cluster: 'cl1-ucp' 
+
+- template: deploy.yml 
+  parameters:
+    dependsOn: ['ci', 'uat_deploy']   # depends on previous stage. mandatory as we are using PROJECT_VERSION from ci stage
+    target_environment: prod
+    ado_environment: maven-dtr-ucp-prod
+    docker_variable_group: docker-prod-creds
+    environment_variable_group: maven-dtr-ucp-prod-creds
+    stack_name: 'SANDBOX_PROD'
+    ucp_cluster: 'cl1-ucp' 

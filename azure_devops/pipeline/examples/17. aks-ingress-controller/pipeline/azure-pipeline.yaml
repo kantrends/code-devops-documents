@@ -1,0 +1,36 @@
+# pipeline url: 
+
+trigger: none
+
+pr: none
+
+pool: 'Premier Linux Agents'
+
+stages:
+- stage: NP_Deploy
+  jobs:
+  - template: helm-deploy.yaml
+    parameters:
+      azureSubscription: SP_CODE_NP_SUB_1 # update this with your ADO service Connection
+      azureResourceGroup: CODENP # update your AKS resource group
+      kubernetesCluster: code-np-eastus-01 # update your AKS cluster name
+      namespace: ingress-nginx
+      environment: azure-dev # azure devops environment
+      chartValueFile: 'aks-ingress-controller/environments/non-prod.yaml'
+      chartReleaseName: code-ingress
+      ssl_cert_secure_file: 'aks-np-cluster-ssl-cert-v1'
+      keyVaultName: CODE-np
+
+# - stage: Prod_Deploy
+#   jobs:
+#   - template: helm-deploy.yaml
+#     parameters:
+#       azureSubscription: SP_CODE_NP_SUB_1 # update this with your ADO service Connection
+#       azureResourceGroup: CODENP # update your AKS resource group
+#       kubernetesCluster: code-np-eastus-01 # update your AKS cluster name
+#       namespace: ingress-nginx
+#       environment: azure-dev # azure devops environment
+#       chartValueFile: 'aks-ingress-controller-helm/environments/prod.yaml'
+#       chartReleaseName: code-ingress
+#       ssl_cert_secure_file: 'aks-prod-cluster-ssl-cert-v1'
+#       keyVaultName: CODE-prd

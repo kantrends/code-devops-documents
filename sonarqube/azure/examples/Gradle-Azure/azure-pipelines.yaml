@@ -1,0 +1,13 @@
+pool: Premier Linux Agents
+
+trigger: none
+
+resources:
+  repositories:
+  - repository: sdlc_templates
+    type: github
+    name: PremierInc/shield-ado-templates
+    endpoint: PremierInc
+    
+stages:
+- template: ci.yaml 

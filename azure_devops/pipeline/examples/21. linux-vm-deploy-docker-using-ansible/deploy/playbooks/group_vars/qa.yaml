@@ -1,0 +1,4 @@
+aspnetcore_environment: "qa"
+
+impaqtgatewayui_instance_count: "1"
+

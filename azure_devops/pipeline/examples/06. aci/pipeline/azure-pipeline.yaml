@@ -1,0 +1,45 @@
+##CQDOC filevalidation PIPELINE
+
+pool:
+  name: 'Premier Linux Agents'
+  demands:
+    - SYSTEM_JDK_11
+    - SYSTEM_MAVEN_3
+
+resources:
+  repositories:
+    - repository: sdlc_templates
+      type: github
+      name: PremierInc/shield-ado-templates
+      endpoint: PremierInc
+
+trigger:
+  branches:
+    exclude:
+      - main
+      - release*
+
+pr:
+  branches:
+    exclude:
+      - main
+      - release*
+
+stages:
+- template: ci.yaml
+
+- template: deploy.yaml 
+  parameters: 
+    stage_name: dev_deploy
+    ado_environment: CQDOC-filevalidation-dev-aci
+    az_subscription_sc : SC_ARM_SUB_CQDOC_NP
+    deploy_variable_group: 'cqdoc-filevalidation-dev-azure'
+
+- template: deploy.yaml 
+  parameters: 
+    stage_name: prod_deploy
+    ado_environment: CQDOC-filevalidation-prod-aci
+    az_subscription_sc : SC_ARM_SUB_CQDOC_PROD
+    deploy_variable_group: 'cqdoc-filevalidation-prod-azure'
+    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'),startsWith(variables['Build.SourceBranch'], 'refs/heads/release')))
+    

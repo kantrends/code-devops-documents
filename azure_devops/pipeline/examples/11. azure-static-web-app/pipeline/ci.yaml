@@ -1,0 +1,49 @@
+stages:
+- stage: ci
+  variables:
+    NODE_VERSION: 18.x
+    PNPM_VERSION: 9.1.1
+  jobs:
+  - job: Build
+    steps:
+    - task: NodeTool@0
+      displayName: Install NodeJS
+      inputs:
+        versionSpec: $(NODE_VERSION)
+        nodejsMirror: https://nexus.premierinc.com/artifacts/repository/nodejs/
+      
+    - bash: |
+        npm install pnpm@$(PNPM_VERSION) -g
+        pnpm config set registry https://nexus.premierinc.com/artifacts/repository/npm/
+        pnpm i
+      displayName: Install dependencies
+
+    # hoping this task creates the static web content.
+    # customize this task according to your project
+    - bash: pnpm run build ; pnpm run build:stories
+      displayName: Build Project 
+      
+    # location where static web page content is generated after running previous build step
+    - publish: ./websites/static
+      artifact: drop
+
+  - job: checkmarx_scan
+    displayName: Checkmarx Scan
+    variables:
+      - group: 'SDLC Credentials'
+    steps:
+      - template: checkmarx-scan.yml@sdlc_templates
+        parameters:
+          CHECKMARX_PASSWORD: "$(CHECKMARX_PASSWORD)"
+          PROJECT_NAME: "sandbox-maven-dtr-ucp"
+          PROJECT_VERSION: $(Build.BuildId)
+          TEAM: "sandbox"
+          # CHECKMARX_ARGUMENTS is optional.  Add it if you want to skip any files.
+          CHECKMARX_ARGUMENTS: -LocationPathExclude "grails-app/assets/javascripts,src/test,src/integration-test,grails-app/taglib/twitter/bootstrap" -LocationFilesExclude "**/grails-wrapper.jar"
+
+
+      - template: lifecycle-scan.yml@sdlc_templates
+        parameters:
+          IQ_API_TOKEN: $(IQ_API_TOKEN)
+          ARTIFACT_VERSION: "$(Build.BuildId)"
+          DISTRIBUTION: Hosted

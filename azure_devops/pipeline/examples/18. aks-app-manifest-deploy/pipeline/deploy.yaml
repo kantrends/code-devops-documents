@@ -1,0 +1,123 @@
+parameters:
+- name: stage_name
+- name: depends_on
+  type: object
+  default: ['ci']
+- name: condition
+  default: succeeded()
+- name: deploy_variable_group
+- name: ado_environment
+- name: az_subscription_sc
+
+stages:
+- stage: ${{ parameters.stage_name }}
+  dependsOn: ${{ parameters.depends_on }}
+  condition: ${{ parameters.condition }}
+
+  variables:
+  - group: "${{ parameters.deploy_variable_group }}"
+  - name: APP_VERSION
+    value: $[ stageDependencies.ci.set_properties.outputs['project_properties.PROJECT_VERSION'] ]
+  - name: ARTIFACTID
+    value: $[ stageDependencies.ci.set_properties.outputs['project_properties.PROJECT_ARTIFACTID'] ]
+  - name: ACR_IMAGE_NAME
+    value: "$(var_acr_name).azurecr.io/$(ARTIFACTID):$(APP_VERSION)"
+  - name: ACR_LATEST_IMAGE
+    value: "$(var_acr_name).azurecr.io/$(ARTIFACTID):latest"  
+
+  jobs:
+  - job: manifest_files
+    steps:
+    - checkout: self
+    - publish: sample-app-manifest/aks_manifest_files
+      artifact: aks_manifest_files
+
+  - deployment: deploy
+    environment: "${{ parameters.ado_environment }}"
+    dependsOn: manifest_files
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: docker_image
+             
+          - bash: |
+              if [[ -d "$(Pipeline.Workspace)/docker_image" && -f "$(Pipeline.Workspace)/docker_image/image.tar" ]]; then
+                echo "Artifact found. Proceeding with image push to ACR."
+                echo "##vso[task.setvariable variable=shouldPushImage]true"
+              else
+                echo "Artifact is missing. Skipping pushing images to ACR."
+                echo "##vso[task.setvariable variable=shouldPushImage]false"
+              fi
+            displayName: Check Tar Image Availability
+
+          - bash: | 
+              docker image load -i image.tar
+              echo "$(ARTIFACTID):$(APP_VERSION)"
+              docker image tag  $(ARTIFACTID):$(APP_VERSION) $(ACR_IMAGE_NAME)
+              docker image tag $(ARTIFACTID):$(APP_VERSION) $(ACR_LATEST_IMAGE)
+            workingDirectory: $(Pipeline.Workspace)/docker_image
+            displayName: Load and Tag Image
+            condition: eq(variables['shouldPushImage'], 'true')
+          
+          - task: AzureCLI@2
+            displayName: Push Image to ACR
+            condition: eq(variables['shouldPushImage'], 'true')
+            inputs:
+              azureSubscription: ${{ parameters.az_subscription_sc }}
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # az login --identity
+                az acr login --name $(var_acr_name)
+                docker image push $(ACR_IMAGE_NAME)
+                docker image push $(ACR_LATEST_IMAGE)
+          
+          - download: current
+            artifact: aks_manifest_files
+
+          # envsubst < service.yaml | kubectl apply -f -
+
+          - bash: |
+              sed -i "s|REPLACE_IMAGE_NAME_TAG|$IMAGE|g" $(Pipeline.Workspace)/aks_manifest_files/*.yaml
+              sed -i "s/REPLACE_HOST_NAME/$HOST_NAME/g" $(Pipeline.Workspace)/aks_manifest_files/*.yaml
+
+              # required for azure key vault 
+              sed -i "s/REPLACE_AKS_KV_MANAGED_IDENTITY/$AKS_KV_MANAGED_IDENTITY/g" $(Pipeline.Workspace)/aks_manifest_files/*.yaml
+              sed -i "s/REPLACE_AZ_KV_NAME/$AZ_KV_NAME/g" $(Pipeline.Workspace)/aks_manifest_files/*.yaml
+
+              # Required for volume mount from azure file share
+              sed -i "s/REPLACE_PV_VOL_NAME/$PV_VOL_NAME/g" $(Pipeline.Workspace)/aks_manifest_files/*.yaml
+              sed -i "s/REPLACE_PV_VOL_HANDLE/$PV_VOL_HANDLE/g" $(Pipeline.Workspace)/aks_manifest_files/*.yaml
+              sed -i "s/REPLACE_STORAGE_ACCOUNT_FILE_SHARE/$STORAGE_ACCOUNT_FILE_SHARE/g" $(Pipeline.Workspace)/aks_manifest_files/*.yaml
+              sed -i "s/REPLACE_STORAGE_ACC_NAME/$STORAGE_ACC_NAME/g" $(Pipeline.Workspace)/aks_manifest_files/*.yaml
+              sed -i "s/REPLACE_STORAGE_ACC_RG/$STORAGE_ACC_RG/g" $(Pipeline.Workspace)/aks_manifest_files/*.yaml
+
+              cat $(Pipeline.Workspace)/aks_manifest_files/*.yaml
+            displayName: Prepare Manifest Files
+            env:
+              IMAGE: $(ACR_IMAGE_NAME)
+              HOST_NAME: $(var_host_name)
+              AKS_KV_MANAGED_IDENTITY: $(var_aks_kv_managed_identity)
+              AZ_KV_NAME: $(var_az_kv_name)
+              PV_VOL_NAME: $(var_pv_vol_name)
+              PV_VOL_HANDLE: $(var_pv_vol_handle)
+              STORAGE_ACCOUNT_FILE_SHARE: $(var_storage_account_file_share)
+              STORAGE_ACC_NAME: $(var_storage_acc_name)
+              STORAGE_ACC_RG: $(var_storage_acc_rg)
+
+
+
+          - task: KubernetesManifest@1
+            inputs:
+              action: 'deploy'
+              connectionType: 'azureResourceManager'
+              azureSubscriptionConnection: ${{ parameters.az_subscription_sc }}
+              azureResourceGroup: $(var_aks_rg)
+              kubernetesCluster: $(var_aks_name)
+              namespace: $(var_aks_namespace)
+              containers: |
+                $(ACR_IMAGE_NAME)
+              manifests: |
+                $(Pipeline.Workspace)/aks_manifest_files/*.yaml

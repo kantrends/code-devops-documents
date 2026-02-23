@@ -1,0 +1,172 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "aci_name": {
+            "type": "string"
+        },
+        "acr_login_server": {
+            "type": "string"
+        },
+        "cpu": {
+            "type": "int",
+            "defaultValue": 1
+        },
+        "image_name": {
+            "type": "string"
+        },
+        "location": {
+            "type": "string",
+            "defaultValue": "eastus"
+        },
+        "log_analytics_workspace_id": {
+            "type": "string"
+        },
+        "log_analytics_workspace_key": {
+            "type": "securestring"
+        },
+        "ram": {
+            "type": "int",
+            "defaultValue": 2
+        },
+        "file_share_name": {
+            "type": "string"
+        },
+        "storage_account_key": {
+            "type": "securestring"
+        },
+        "storage_account_name": {
+            "type": "string"
+        },
+        "subnet_id": {
+            "type": "string"
+        },
+        "tags": {
+            "type": "object"
+        },
+        "user_assigned_identity": {
+            "type": "string"
+        },
+        "env_cqdoc_validation_yml": {
+            "type": "securestring"
+        },
+        "env_cqdoc_keytab": {
+            "type": "securestring"
+        },
+        "env_spring_profiles_active": {
+            "type": "string"
+        }
+    },
+    "resources": [
+        {
+            "type": "Microsoft.ContainerInstance/containerGroups",
+            "apiVersion": "2021-10-01",
+            "name": "[parameters('aci_name')]",
+            "location": "[parameters('location')]",
+            "tags": "[parameters('tags')]",
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                    "[parameters('user_assigned_identity')]": {}
+                }
+            },
+            "properties": {
+                "sku": "Standard",
+                "containers": [
+                    {
+                        "name": "[parameters('aci_name')]",
+                        "properties": {
+                            "image": "[parameters('image_name')]",
+                            "command": [],
+                            "ports": [
+                                {
+                                    "protocol": "TCP",
+                                    "port": 80
+                                }
+                            ],
+                            "environmentVariables": [
+                                {
+                                    "name": "cqdoc_validation_yml",
+                                    "value": "[parameters('env_cqdoc_validation_yml')]"
+                                },
+                                {
+                                    "name": "SPRING_PROFILES_ACTIVE",
+                                    "value": "[parameters('env_spring_profiles_active')]"
+                                },
+                                {
+                                    "name": "cqdoc_keytab",
+                                    "value": "[parameters('env_cqdoc_keytab')]"
+                                },
+                                {
+                                    "name": "SPRING_CONFIG_LOCATION",
+                                    "value": "classpath:/application.yml,file:/opt/app/cqdoc-filevalidation/config/application.yml"
+                                }
+                            ],
+                            "resources": {
+                                "requests": {
+                                    "memoryInGB": "[parameters('ram')]",
+                                    "cpu": "[parameters('cpu')]"
+                                }
+                            },
+                            "volumeMounts": [
+                                {
+                                    "name": "cqdocshare",
+                                    "mountPath": "/cqdoc_intake",
+                                    "readOnly": false
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "initContainers": [],
+                "imageRegistryCredentials": [
+                    {
+                        "server": "[parameters('acr_login_server')]",
+                        "identity": "[parameters('user_assigned_identity')]"
+                    }
+                ],
+                "restartPolicy": "Always",
+                "ipAddress": {
+                    "ports": [
+                        {
+                            "protocol": "TCP",
+                            "port": 80
+                        }
+                    ],
+                    "type": "Private"
+                },
+                "osType": "Linux",
+                "volumes": [
+                    {
+                        "name": "cqdocshare",
+                        "azureFile": {
+                            "shareName": "[parameters('file_share_name')]",
+                            "readOnly": false,
+                            "storageAccountName": "[parameters('storage_account_name')]",
+                            "storageAccountKey": "[parameters('storage_account_key')]"
+                        }
+                    }
+                ],
+                "diagnostics": {
+                    "logAnalytics": {
+                        "workspaceId": "[parameters('log_analytics_workspace_id')]",
+                        "logType": "ContainerInsights",
+                        "metadata": {},
+                        "workspaceKey": "[parameters('log_analytics_workspace_key')]"
+                    }
+                },
+                "subnetIds": [
+                    {
+                        "id": "[parameters('subnet_id')]"
+                    }
+                ],
+                "dnsConfig": {
+                    "nameServers": [
+                        "10.251.40.134",
+                        "10.251.140.134"
+                    ]
+                }
+            }
+        }
+    ]
+}

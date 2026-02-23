@@ -1,0 +1,91 @@
+stages:
+- stage: ci
+  variables:
+  - group: SDLC Credentials
+  displayName: CQDOC CI 
+  jobs:
+  - job: set_properties
+    displayName: Set Properties
+    steps:
+    - bash: | 
+        groupId=$($MAVEN help:evaluate -Dexpression="project.groupId" -q -DforceStdout)
+        artifactId=$($MAVEN help:evaluate -Dexpression="project.artifactId" -q -DforceStdout)
+        version=$($MAVEN help:evaluate -Dexpression="project.version" -q -DforceStdout)
+        echo "##vso[task.setvariable variable=PROJECT_VERSION;isOutput=true]$version"
+        echo "##vso[task.setvariable variable=PROJECT_ARTIFACTID;isOutput=true]$artifactId"
+        echo "##vso[task.setvariable variable=PROJECT_GROUPID;isOutput=true]$groupId"
+      name: project_properties
+      displayName: Set Project Properties
+      env:
+        MAVEN: $(SYSTEM_MAVEN_3)
+        JAVA_HOME: $(SYSTEM_JDK_11)
+    - bash: |
+        set -eu
+        echo "Project Version: $(project_properties.PROJECT_VERSION)"
+        echo "Project Artifact ID: $(project_properties.PROJECT_ARTIFACTID)"
+        echo "Project Group ID: $(project_properties.PROJECT_GROUPID)"
+      displayName: Display Project Properties
+      
+  - job: Build 
+    dependsOn: set_properties
+    displayName: CQDOC CI
+    variables:
+      - group: "cqdoc-provision-dev"
+      - group: 'docker-np-creds'
+      - name: ARTIFACT_ID
+        value: $[ dependencies.set_properties.outputs['project_properties.PROJECT_ARTIFACTID'] ]
+    steps:
+      - task: Maven@4
+        displayName: Maven Build
+        inputs:
+          mavenPomFile: 'pom.xml'
+          goals: 'clean deploy'
+          options: '-B'
+          javaHomeOption: 'Path'
+          jdkDirectory: $(SYSTEM_JDK_11)
+          mavenVersionOption: 'Path'
+          mavenDirectory: $(SYSTEM_MAVEN_3_HOME)
+          
+      - bash: docker image save -o image.tar $(ARTIFACT_ID):$(APP_VERSION)
+        displayName: Create TAR Image 
+
+      - publish: image.tar
+        artifact: docker_image
+        displayName: Publish Artifacts
+        
+  - job: Nexuslifecycle_scan
+    displayName: Nexuslifecycle scan
+    dependsOn: set_properties
+    steps:
+    - task: Maven@4
+      displayName: Plugin
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'install com.sonatype.clm:clm-maven-plugin:index -Dclm.additionalScopes=provided'
+        options: '-B -e -Dno-docker -DskipTests'
+        javaHomeOption: 'Path'
+        jdkDirectory: $(SYSTEM_JDK_11)
+        mavenVersionOption: 'Path'
+        mavenDirectory: $(SYSTEM_MAVEN_3_HOME)
+
+    - template: lifecycle-scan.yml@sdlc_templates
+      parameters:
+        IQ_API_TOKEN: $(IQ_API_TOKEN)
+        ARTIFACT_VERSION: "$(Build.BuildId)"
+        DISTRIBUTION: Hosted
+        ENABLE_CALLFLOW: true
+
+  - job: checkmarx_scan
+    displayName: Checkmarx Scan
+    dependsOn: set_properties
+    variables:
+      - group: 'SDLC Credentials'
+    steps:
+      - template: checkmarx-scan.yml@sdlc_templates
+        parameters:
+          CHECKMARX_PASSWORD: "$(CHECKMARX_PASSWORD)"
+          PROJECT_NAME: "sandbox-maven-dtr-ucp"
+          PROJECT_VERSION: $(Build.BuildId)
+          TEAM: "sandbox"
+          # CHECKMARX_ARGUMENTS is optional.  Add it if you want to skip any files.
+          CHECKMARX_ARGUMENTS: -LocationPathExclude "grails-app/assets/javascripts,src/test,src/integration-test,grails-app/taglib/twitter/bootstrap" -LocationFilesExclude "**/grails-wrapper.jar"

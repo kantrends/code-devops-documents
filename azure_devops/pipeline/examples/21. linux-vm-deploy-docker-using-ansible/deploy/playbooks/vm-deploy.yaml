@@ -1,0 +1,15 @@
+---
+# deploy/playbooks/vm-deploy.yaml
+
+- name: Deploy ImpaqtGatewayUI
+  hosts: "{{ deploy_environment }}"
+  gather_facts: true
+  serial: 1
+
+  tasks:
+    - name: Install Docker
+      import_tasks: install-docker.yaml
+
+    - name: Deploy Dashboard Container
+      import_tasks: deploy-app.yaml
+  

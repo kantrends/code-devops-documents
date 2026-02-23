@@ -1,0 +1,27 @@
+bundle:
+  name: Deployment_Bundle
+
+include:
+  - resources/*.yml
+
+workspace:
+  root_path: /Workspace/'team_name'/.bundle/${bundle.name}/ # Team name should be added according to the team.
+
+targets:
+  np:
+    mode: production
+    default: true
+    workspace:
+      host: 'host provided by the  team'
+  
+  perf:
+    mode: production
+    default: true
+    workspace:
+      host: 'host provided by the  team'
+
+  prod:
+    mode: production
+    default: true
+    workspace:
+      host: 'host provided by the  team'

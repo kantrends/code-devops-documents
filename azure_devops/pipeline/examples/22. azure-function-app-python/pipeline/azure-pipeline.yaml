@@ -1,0 +1,24 @@
+# pipeline url: 
+
+pool: Premier Linux Agents
+
+trigger: none
+pr: none
+
+stages:
+- template: ci.yaml
+
+- template: deploy.yaml
+  parameters:
+    stage_name: 'np_deploy'
+    az_service_connection: 'SP_CODE_NP_SUB_1'
+    ado_environment: 'azure-dev'
+    variable_group: 'code-ado-wi-gh-issue-sync-np'
+
+- template: deploy.yaml
+  parameters:
+    stage_name: 'prod_deploy'
+    az_service_connection: 'SC_ARM_CODE_PRD'
+    ado_environment: 'azure-prod'
+    variable_group: 'code-ado-wi-gh-issue-sync-prod'
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))

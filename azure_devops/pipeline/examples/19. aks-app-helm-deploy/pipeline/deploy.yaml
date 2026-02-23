@@ -1,0 +1,97 @@
+parameters:
+- name: stage_name
+- name: deploy_variable_group
+- name: ado_environment
+- name: az_subscription_sc
+- name: chartValueFile
+- name: depends_on
+  type: object
+  default: ['ci']
+
+stages:
+- stage: ${{ parameters.stage_name}}
+  dependsOn: ${{ parameters.depends_on }}
+  variables:
+  - group: "${{ parameters.deploy_variable_group }}"
+  - name: APP_VERSION
+    value: $[ stageDependencies.ci.set_properties.outputs['project_properties.PROJECT_VERSION'] ]
+  - name: ARTIFACTID
+    value: $[ stageDependencies.ci.set_properties.outputs['project_properties.PROJECT_ARTIFACTID'] ]
+  - name: ACR_IMAGE_NAME
+    value: "$(var_acr_name).azurecr.io/$(ARTIFACTID):$(APP_VERSION)"
+  - name: ACR_LATEST_IMAGE
+    value: "$(var_acr_name).azurecr.io/$(ARTIFACTID):latest"  
+  jobs:
+  - job: helm_charts
+    steps:
+    - checkout: self
+    - publish: sample-app-helm/helm-charts
+      artifact: helm_charts
+
+  - deployment: DeployHelmChart
+    displayName: Install/Upgrade Helm Charts
+    dependsOn: helm_charts
+    pool: 'Premier Linux Agents'
+    environment: ${{ parameters.ado_environment }}
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: docker_image
+              
+          - bash: |
+              if [[ -d "$(Pipeline.Workspace)/docker_image" && -f "$(Pipeline.Workspace)/docker_image/image.tar" ]]; then
+                echo "Artifact found. Proceeding with image push to ACR."
+                echo "##vso[task.setvariable variable=shouldPushImage]true"
+              else
+                echo "Artifact is missing. Skipping pushing images to ACR."
+                echo "##vso[task.setvariable variable=shouldPushImage]false"
+              fi
+            displayName: Check Tar Image Availability
+
+          - bash: | 
+              docker image load -i image.tar
+              echo "$(ARTIFACTID):$(APP_VERSION)"
+              docker image tag  $(ARTIFACTID):$(APP_VERSION) $(ACR_IMAGE_NAME)
+              docker image tag $(ARTIFACTID):$(APP_VERSION) $(ACR_LATEST_IMAGE)
+            workingDirectory: $(Pipeline.Workspace)/docker_image
+            displayName: Load and Tag Image
+            condition: eq(variables['shouldPushImage'], 'true')
+          
+          - task: AzureCLI@2
+            displayName: Push Image to ACR
+            condition: eq(variables['shouldPushImage'], 'true')
+            inputs:
+              azureSubscription: ${{ parameters.az_subscription_sc }}
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # az login --identity
+                az acr login --name $(var_acr_name)
+                docker image push $(ACR_IMAGE_NAME)
+                docker image push $(ACR_LATEST_IMAGE)
+
+          - download: current
+            artifact: helm_charts
+
+          - task: HelmInstaller@1
+
+          - bash: helm dependency update
+            displayName: Download helm dependencies 
+            workingDirectory: $(Pipeline.Workspace)/helm_charts
+
+          - task: HelmDeploy@1
+            displayName: 'Deploy Helm Chart'
+            inputs:
+              connectionType: Azure Resource Manager
+              azureSubscription: ${{ parameters.az_subscription_sc }}
+              azureResourceGroup: $(var_aks_rg)
+              kubernetesCluster: $(var_aks_name)
+              command: upgrade
+              arguments: '--set image.repository=$(var_acr_name).azurecr.io/$(ARTIFACTID) --set image.tag=$(APP_VERSION)'
+              namespace: $(var_aks_namespace)
+              chartType: FilePath
+              chartPath: '$(Pipeline.Workspace)/helm_charts'
+              releaseName: sample-app-helm
+              valueFile: $(Pipeline.Workspace)/helm_charts/${{ parameters.chartValueFile }}

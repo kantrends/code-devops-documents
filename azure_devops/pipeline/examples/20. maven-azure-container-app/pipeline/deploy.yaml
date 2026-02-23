@@ -1,0 +1,189 @@
+parameters:
+  - name: ado_environment
+  - name: deploy_variable_group
+  - name: stage_name
+  - name: az_subscription_sc
+  - name: blue_green
+    default: 'False'
+  - name: depends_on
+    type: object
+    default: ['ci']
+  - name: condition
+    default: succeeded()
+
+stages:
+  - stage: ${{ parameters.stage_name }}
+    dependsOn: ${{ parameters.depends_on }}
+    condition: ${{ parameters.condition }}
+
+    variables:
+      - group: "${{ parameters.deploy_variable_group }}"
+
+    jobs:
+      - deployment: deploy
+        environment: "${{ parameters.ado_environment }}"
+        variables:
+          APP_VERSION: $[ stageDependencies.CI.set_properties.outputs['project_properties.PROJECT_VERSION'] ]
+          ARTIFACTID: $[ stageDependencies.CI.set_properties.outputs['project_properties.PROJECT_ARTIFACTID'] ]
+          ACR_IMAGE_NAME: "$(var_acr_name).azurecr.io/$(ARTIFACTID):$(APP_VERSION)"
+          ACR_LATEST_IMAGE: "$(var_acr_name).azurecr.io/$(ARTIFACTID):latest"
+        strategy:
+          runOnce:
+            deploy:
+              # Logic here
+              # 1. Read values from Azure DevOps pipeline Library group
+              # 2. Update the confidential values to Azure Key vault
+              # 3. Create Azure Container App with env vars, secrets, replicas
+              steps:
+                - bash: |
+                    if [[ -d "$(Pipeline.Workspace)/drop-$(Build.BuildId)" && -f "$(Pipeline.Workspace)/drop-$(Build.BuildId)/image.tar" ]]; then
+                      echo "Artifact found. Proceeding with image push to ACR."
+                      echo "##vso[task.setvariable variable=shouldPushImage]true"
+                    else
+                      echo "Artifact is missing. Skipping pushing images to ACR."
+                      echo "##vso[task.setvariable variable=shouldPushImage]false"
+                    fi
+                  displayName: Check Tar Image Availability
+
+                - bash: |
+                    docker image load -i image.tar
+                    echo "$(ARTIFACTID):$(APP_VERSION)"
+                    docker image tag  $(ARTIFACTID):$(APP_VERSION) $(ACR_IMAGE_NAME)
+                    docker image tag $(ARTIFACTID):$(APP_VERSION) $(ACR_LATEST_IMAGE)
+                  workingDirectory: $(Pipeline.Workspace)/drop-$(Build.BuildId)
+                  displayName: Load and Tag Image
+                  condition: eq(variables['shouldPushImage'], 'true')
+
+                - task: AzureCLI@2
+                  displayName: Push Image to ACR
+                  condition: eq(variables['shouldPushImage'], 'true')
+                  inputs:
+                    azureSubscription: ${{ parameters.az_subscription_sc }}
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      # az login --identity
+                      az acr login --name $(var_acr_name)
+                      docker image push $(ACR_IMAGE_NAME)
+                      docker image push $(ACR_LATEST_IMAGE)
+
+                - task: AzureCLI@2
+                  displayName: Update Azure Keyvault secrets
+                  inputs:
+                    azureSubscription: ${{ parameters.az_subscription_sc }}
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      # logic:
+                      # create secret if not present
+                      # update secret only if value present in KV is different from given secretValue
+                      function update_secret() {
+                        vault_name="$1"
+                        secret_name="$2"
+                        secret_value="$3"
+                      
+                        echo "Checking secret $secret_name in keyvault $vault_name.."
+
+                        # Check if the secret exists
+                        secretExists=$(az keyvault secret list --vault-name $vault_name --query "[?name=='$secret_name'].name" -o tsv)
+                      
+                        if [ -n "$secretExists" ]; then
+                          # Secret exists, retrieve its value
+                          kv_secret_value=$(az keyvault secret show --vault-name $vault_name --name $secret_name --query value -o tsv)
+                          if [ "$kv_secret_value" = "$secret_value" ]; then
+                            echo "KV value is same as Secret value. Hence, skip updating key vault"
+                            return
+                          fi
+                          echo "KV value is different from secret value"
+                        fi
+                        echo "Updating secret $secret_name in keyvault $vault_name.."
+                        az keyvault secret set --name $secret_name --vault-name $vault_name --value $secret_value -o none
+                      }
+                      update_secret $(var_az_keyvault) revelations-annotator-tool-database-password "$(DATABASE_PASSWORD)"
+                      update_secret $(var_az_keyvault) revelations-annotator-tool-database-username "$(DATABASE_USERNAME)"
+
+                - task: AzureCLI@2
+                  displayName: Create Container App
+                  inputs:
+                    azureSubscription: ${{ parameters.az_subscription_sc }}
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      az extension add --name containerapp --upgrade --allow-preview true
+                      container_app=$(var_az_containerapp)
+                      container_app_rg="$(var_az_containerapp_rg)"
+                      container_app_env="$(var_az_containerapp_env)"
+                      
+                      keyvault="$(var_az_keyvault)"
+                
+                      cat <<- EOF > aca-$(Build.BuildId).yaml
+                      ---
+                      name: $container_app
+                      type: Microsoft.App/containerApps
+                      kind: containerapps
+                      location: East US
+                      properties:
+                        environmentId: "$(az containerapp env show -n $container_app_env -g $container_app_rg | jq -r .id)"
+                        workloadProfileName: Consumption
+                        configuration:
+                          activeRevisionsMode: Single
+                          ingress:
+                            external: true
+                            targetPort: 8080
+                            transport: Auto
+                          secrets:
+                            - name: db-password
+                              keyVaultUrl: "https://$keyvault.vault.azure.net/secrets/revelations-annotator-tool-database-password"
+                              identity: "system"
+                            - name: db-username
+                              identity: "system"
+                              keyVaultUrl: "https://$keyvault.vault.azure.net/secrets/revelations-annotator-tool-database-username"
+                          registries:
+                            - server: "$(var_acr_name).azurecr.io"
+                              identity: "system"
+                          volumes:
+                            - name: nginx-share
+                              storageType: AzureFile
+                              storageName: "$(var_storage_account_name)"
+                              shareName: aca-fileshare
+                              accessMode: ReadWrite
+                              identity: "system"
+                        template: 
+                          containers:
+                            - image: "$(ACR_IMAGE_NAME)"
+                              name: $container_app
+                              env:
+                                - name: DEPLOY_TIME
+                                  value: "$(date)"
+                                - name: DATABASE_PASSWORD
+                                  secretRef: db-password
+                                - name: DATABASE_USERNAME
+                                  secretRef: db-username
+                                - name: SPRING_PROFILES_ACTIVE
+                                  value: "$(spring_active_profile)"
+                              resources:
+                                cpu: $(var_cpu)
+                                memory: $(var_memory)
+                              volumeMounts:
+                                - volumeName: nginx-share
+                                   mountPath: /opt/app/nginx/data/files
+                          scale:
+                            minReplicas: 1
+                            maxReplicas: $(var_max_replicas)
+                      EOF
+                      cat aca-$(Build.BuildId).yaml
+
+                      echo "Creating Container App"
+                      az containerapp update --name $container_app \
+                                             --resource-group $container_app_rg \
+                                             --yaml aca-$(Build.BuildId).yaml | tee result-$(Build.BuildId).yaml
+
+                      if [[ "$(cat result-$(Build.BuildId).yaml | jq -r .properties.provisioningState)" = "Succeeded" ]] ; then
+                        echo "Looks good"
+                      else
+                        >&2 echo "Provisioning state returned different value"
+                        exit 1
+                      fi
+                      echo "Sleeping for 5 mins"
+                      sleep 300s
+                      echo "Deployment completed !!"

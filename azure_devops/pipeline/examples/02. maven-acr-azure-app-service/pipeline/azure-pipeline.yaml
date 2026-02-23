@@ -1,0 +1,55 @@
+pool: Premier Linux Agents
+
+resources:
+  repositories:
+  - repository: sdlc_templates
+    type: github
+    name: PremierInc/shield-ado-templates
+    endpoint: PremierInc
+
+stages:
+- template: ci.yaml 
+
+- template: deploy.yaml
+  parameters:
+    stage_name: DEV_DEPLOY
+    depends_on: ['ci']
+    ado_environment: 'cqdoc-provision-dev'
+    az_subscription_sc: "SC_ARM_SUB_CQDOC_NP"
+    deploy_variable_group: 'cqdoc-provision-dev-azure'
+
+- template: deploy.yaml
+  parameters:
+    stage_name: QA_DEPLOY
+    depends_on: ['ci']
+    # main and develop goes to QA
+    condition: and(succeeded(), in(variables['Build.SourceBranch'], 'refs/heads/main', 'refs/heads/develop'))
+    ado_environment: 'cqdoc-provision-qa'
+    az_subscription_sc: "SC_ARM_SUB_CQDOC_NP"
+    deploy_variable_group: 'cqdoc-provision-qa-azure'
+
+- template: deploy.yaml
+  parameters:
+    stage_name: UAT_DEPLOY
+    depends_on: ['ci']
+    # main, release goes to uat
+    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'),startsWith(variables['Build.SourceBranch'], 'refs/heads/release')))
+    # set blue_green to False if there is no approvers for the environment or 
+    # if you don't want blue_green deployment model
+    blue_green: true
+    ado_environment: 'cqdoc-provision-uat'
+    az_subscription_sc: "SC_ARM_SUB_CQDOC_PROD"
+    deploy_variable_group: 'cqdoc-provision-uat-azure'
+
+- template: deploy.yaml
+  parameters:
+    stage_name: PROD_DEPLOY
+    depends_on: ['ci']
+    # main and release goes to prod 
+    condition: and(succeeded(), or(eq(variables['Build.SourceBranch'], 'refs/heads/main'),startsWith(variables['Build.SourceBranch'], 'refs/heads/release')))
+    # set blue_green to False if there is no approvers for the environment or 
+    # if you don't want blue_green deployment model
+    blue_green: true 
+    ado_environment: 'cqdoc-provision-prod'
+    az_subscription_sc: "SC_ARM_SUB_CQDOC_PROD"
+    deploy_variable_group: 'cqdoc-provision-prod-azure'

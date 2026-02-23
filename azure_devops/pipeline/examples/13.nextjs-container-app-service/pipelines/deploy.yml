@@ -1,0 +1,132 @@
+parameters:
+- name: ado_environment
+- name: deploy_variable_group
+- name: stage_name
+- name: az_subscription_sc
+- name: blue_green
+  default: 'False'
+- name: depends_on
+  type: object
+  default: ['ci']
+- name: condition
+  default: succeeded()
+
+stages:
+  - stage: ${{ parameters.stage_name }}
+    dependsOn: ${{ parameters.depends_on }}
+    condition: ${{ parameters.condition }}
+
+    variables:
+      - group: "${{ parameters.deploy_variable_group }}"
+
+    jobs:
+      - deployment: deploy
+        environment: "${{ parameters.ado_environment }}"
+
+        variables:
+          APP_VERSION: $(VERSION_TAG)
+          ARTIFACTID: $(SERVICE_NAME)
+          ACR_IMAGE_NAME: "$(var_acr_name).azurecr.io/$(ARTIFACTID):$(APP_VERSION)"
+          ACR_LATEST_IMAGE: "$(var_acr_name).azurecr.io/$(ARTIFACTID):latest"
+
+          ${{ if in(parameters.blue_green, 'False', 'false') }}:
+            APP_SERVICE_SLOT: 'production'
+          ${{ if in(parameters.blue_green, 'True', 'true') }}:
+            APP_SERVICE_SLOT: 'staging'
+
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - bash: |
+                    docker image load -i image.tar
+                    echo "$(ARTIFACTID):$(APP_VERSION)"
+                    docker image tag  $(ARTIFACTID):$(APP_VERSION) $(ACR_IMAGE_NAME)
+                    docker image tag $(ARTIFACTID):$(APP_VERSION) $(ACR_LATEST_IMAGE)
+                  workingDirectory: $(Pipeline.Workspace)/docker_image
+                  displayName: Load and Tag Image
+
+                - task: AzureCLI@2
+                  displayName: Push Image to ACR
+                  inputs:
+                    azureSubscription: ${{ parameters.az_subscription_sc }}
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      # az login --identity
+                      az acr login --name $(var_acr_name)
+                      docker image push $(ACR_IMAGE_NAME)
+                      docker image push $(ACR_LATEST_IMAGE)
+
+                - task: AzureCLI@2
+                  displayName: Retrieve App Insights Details
+                  name: app_insights
+                  inputs:
+                    azureSubscription: ${{ parameters.az_subscription_sc }}
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      app_insights_instrumentation_key=$(az resource show --resource-type "microsoft.insights/components" --query properties.InstrumentationKey -g $(var_app_insights_rg) -n $(var_app_insights))
+                      app_insights_connection_string=$(az resource show --resource-type "microsoft.insights/components" --query properties.ConnectionString -g $(var_app_insights_rg) -n $(var_app_insights))
+                      echo "##vso[task.setvariable variable=APP_INSIGHTS_INSTRUMENTATION_KEY;isOutput=true]$app_insights_instrumentation_key"
+                      echo "##vso[task.setvariable variable=APP_INSIGHTS_CONNECTION_STRING;isOutput=true]$app_insights_connection_string"
+
+                # # in case if your app requires secrets like db_password, we need the below task to upload secret to azure key vault
+                # # if you don't need, then comment it out.
+                # - task: AzureCLI@2
+                #   displayName: Uploads Secrets to Azure KV
+                #   inputs:
+                #     azureSubscription: ${{ parameters.az_subscription_sc }}
+                #     scriptType: 'bash'
+                #     scriptLocation: 'inlineScript'
+                #     inlineScript: |
+                #       # in this example, creating two secrets in azure key vaults.
+                #       az keyvault secret set --name csa-op-app-datasource-password --vault-name $(var_az_keyvault) --value "$(var_az_db_password)"
+                #       az keyvault secret set --name csa-op-app-datasource-username --vault-name $(var_az_keyvault) --value "$(var_az_db_password)"
+
+                - task: AzureWebAppContainer@1
+                  inputs:
+                    azureSubscription: ${{ parameters.az_subscription_sc }}
+                    resourceGroupName: $(var_az_app_service_rg)
+                    appName: $(var_az_app_service)
+                    deployToSlotOrASE: true
+                    slotName: '$(APP_SERVICE_SLOT)'
+                    imageName: "$(ACR_IMAGE_NAME)"
+                    configurationStrings: >
+                      -healthCheckPath /
+                    # if you need to pass additional environment variables to your application,
+                    # you can have them here like SPRING_PROFILES_ACTIVE
+                    appSettings: >
+                      -WEBSITE_PULL_IMAGE_OVER_VNET true
+                      -WEBSITES_PORT 3000
+                      -APPLICATIONINSIGHTS_CONNECTION_STRING $(app_insights.APP_INSIGHTS_CONNECTION_STRING)
+                      -APPINSIGHTS_INSTRUMENTATIONKEY $(app_insights.APP_INSIGHTS_INSTRUMENTATION_KEY)
+                      -ApplicationInsightsAgent_EXTENSION_VERSION ~3
+
+                - task: AzureAppServiceManage@0
+                  displayName: Start the App Service if not started properly
+                  inputs:
+                    azureSubscription:  ${{ parameters.az_subscription_sc }}
+                    ResourceGroupName: $(var_az_app_service_rg)
+                    WebAppName: $(var_az_app_service)
+                    Action: 'Start Azure App Service'
+                    SpecifySlotOrASE: true
+                    Slot: '$(APP_SERVICE_SLOT)'
+
+  # in blue green model, first app is deploy to "staging" slot.
+  # If all looks good, do a LB switch to "production" slot
+  - ${{ if in(parameters.blue_green, 'True', 'true') }}:
+      - stage: ${{ parameters.stage_name }}_GREEN_LIVE
+        condition: ${{ parameters.condition }}
+        dependsOn: ${{ parameters.stage_name }}
+
+        variables:
+          - group: "${{ parameters.deploy_variable_group }}"
+
+        jobs:
+          - template: switch-slots.yml
+            parameters:
+              ado_environment: ${{ parameters.ado_environment }}
+              service_name: gateway
+              app_service_variable: $(var_az_app_service)
+              az_subscription_sc: ${{ parameters.az_subscription_sc }}

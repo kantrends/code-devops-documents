@@ -1,0 +1,78 @@
+# Pipeline URL: https://dev.azure.com/premierinc/ImpaQtGateway/_build?definitionId=5447
+
+pool:
+  name: 'Premier Linux Agents'
+  
+resources:
+  repositories:
+    - repository: sdlc_templates
+      type: github
+      name: PremierInc/shield-ado-templates
+      endpoint: PremierInc
+
+trigger: none
+
+pr:
+  branches:
+    exclude:
+      - main
+      - release*
+
+variables:
+- ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+  - name: VERSION_TAG
+    value: "$(Build.SourceVersion)"
+- ${{ else }}:
+  - name: VERSION_TAG 
+    value: 2.0-SNAPSHOT
+- name: SERVICE_NAME
+  value: gateway 
+  
+
+stages:
+- template: ci.yaml 
+
+- template: vm-deploy.yaml
+  parameters: 
+    stage_name: 'dev'
+    ado_environment: vm-dev
+    ansible_private_key_file_secure_library: 'ansible_c3dumceui01'
+    acr_variable_group: 'acr-creds-dev'
+    app_variablegroup: 'impaqtGatewayUI-dev-vm'
+    ece_variablegroup: 'ece-np-creds'
+    ssl_cert_secure_file: 'mce_ssl_cert_v1'
+    ssl_cert_key_secure_file: 'mce_ssl_cert_key_v1'
+
+
+- template: vm-deploy.yaml
+  parameters: 
+    stage_name: 'qa'
+    ado_environment: vm-qa
+    ansible_private_key_file_secure_library: 'ansible_c3qumceui01'
+    acr_variable_group: 'acr-creds-dev'
+    app_variablegroup: 'impaqtGatewayUI-qa-vm'
+    ece_variablegroup: 'ece-np-creds'
+    ssl_cert_secure_file: 'mce_ssl_cert_v1'
+    ssl_cert_key_secure_file: 'mce_ssl_cert_key_v1'
+
+- template: vm-deploy.yaml
+  parameters:
+    stage_name: 'uat'
+    ado_environment: vm-uat
+    ansible_private_key_file_secure_library: 'ansible_c3sumceui'
+    acr_variable_group: 'acr-creds-prod'
+    app_variablegroup: 'impaqtGatewayUI-uat-vm'
+    ece_variablegroup: 'ece-prod-creds'
+    ssl_cert_secure_file: 'mce_ssl_cert_v1'
+    ssl_cert_key_secure_file: 'mce_ssl_cert_key_v1'
+
+- template: vm-deploy.yaml
+  parameters:
+    stage_name: 'prod'
+    ado_environment: vm-prod
+    ansible_private_key_file_secure_library: 'ansible_c2pumceui'
+    acr_variable_group: 'acr-creds-prod'
+    app_variablegroup: 'impaqtGatewayUI-uat-vm'
+    ece_variablegroup: 'ece-prod-creds'
+    ssl_cert_secure_file: 'mce_ssl_cert_v1'
+    ssl_cert_key_secure_file: 'mce_ssl_cert_key_v1'

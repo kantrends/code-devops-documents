@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.premierinc.provision</groupId>
+        <artifactId>provision-parent</artifactId>
+        <version>1.5.3</version>
+    </parent>
+
+    <groupId>com.premierinc.ae</groupId>
+    <artifactId>ae-provision</artifactId>
+    <version>1.0.29-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <name>ae-provision</name>
+    <description>AE user provisioning service</description>
+
+    <repositories>
+        <repository>
+            <id>code</id>
+            <name>Premier Internal Repository</name>
+            <url>https://nexus.premierinc.com/artifacts/repository/public/</url>
+        </repository>
+    </repositories>
+
+    <properties>
+        <enforcer.failOnError>false</enforcer.failOnError>
+        <!-- Dependency version -->
+        <oracle.version>12.1.0.2</oracle.version>
+        <version.provision.service>1.5.3</version.provision.service>
+        <version.provision.resources>1.4.1</version.provision.resources>
+    </properties>
+
+
+    <dependencies>
+        <!-- Spring boot dependencies -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-config</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>log4j-over-slf4j</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+
+        <!-- For AE database -->
+        <dependency>
+            <groupId>com.oracle</groupId>
+            <artifactId>ojdbc7</artifactId>
+            <version>${oracle.version}</version>
+        </dependency>
+
+        <!-- Common provisioning service -->
+        <dependency>
+            <groupId>com.premierinc.provision</groupId>
+            <artifactId>common-provision-service</artifactId>
+            <version>${version.provision.service}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.premierinc.provision</groupId>
+            <artifactId>shared-resources</artifactId>
+            <version>${version.provision.resources}</version>
+            <classifier>resources</classifier>
+            <type>zip</type>
+            <!-- Make sure this isn't included on any classpath-->
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.httpcomponents</groupId>
+            <artifactId>httpclient</artifactId>
+        </dependency>
+
+        <!-- Testing -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <version>1.4.2.RELEASE</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.spockframework</groupId>
+            <artifactId>spock-spring</artifactId>
+            <version>1.0-groovy-2.4</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-test</artifactId>
+            <version>1.4.2.RELEASE</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+
+            <!-- Surefire tries to run testng because it's a transitive dependency and fails, so disable -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <testNGArtifactName>none:none</testNGArtifactName>
+                </configuration>
+            </plugin>
+
+            <!-- This Plugin is used to retrieve the Maven Project ID, Artifact ID, Version -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-help-plugin</artifactId>
+                <version>3.2.0</version>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>dev</id>
+            <properties>
+                <spring.profiles.active>dev</spring.profiles.active>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>local</id>
+            <properties>
+                <spring.profiles.active>local</spring.profiles.active>
+            </properties>
+        </profile>
+
+        <profile>
+            <id>local_db</id>
+            <properties>
+                <spring.profiles.active>local_db</spring.profiles.active>
+            </properties>
+        </profile>
+    </profiles>
+
+</project>

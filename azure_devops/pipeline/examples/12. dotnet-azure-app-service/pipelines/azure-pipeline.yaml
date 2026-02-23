@@ -1,0 +1,40 @@
+pool: Premier Linux Agents
+
+resources:
+  repositories:
+  - repository: sdlc_templates
+    type: github
+    name: PremierInc/shield-ado-templates
+    endpoint: PremierInc
+
+stages: 
+- template: ci.yaml
+
+- template: deployment.yaml
+  parameters:
+    stage_name: DEV_DEPLOY
+    depends_on: ['ci']
+     # set blue_green to False if there is no approvers for the environment or 
+     # if you don't want blue_green deployment model
+    blue_green: false 
+    ado_environment: ''
+    az_subscription_sc: ""
+    deploy_variable_group: ''
+
+- template: deployment.yaml
+  parameters:
+    stage_name: PROD_DEPLOY
+    depends_on: ['ci']
+    # set blue_green to False if there is no approvers for the environment or 
+    # if you don't want blue_green deployment model
+    blue_green: false 
+    condition: and(
+                succeeded(), 
+                or(
+                  eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+                  startsWith(variables['Build.SourceBranch'], 'refs/heads/release/')
+                  )
+               )
+    ado_environment: ''
+    az_subscription_sc: ''
+    deploy_variable_group: ''

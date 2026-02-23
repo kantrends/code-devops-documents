@@ -1,0 +1,107 @@
+stages:
+  - stage: CI
+    variables:
+      - group: 'SDLC Credentials'
+    jobs:
+      - job: set_properties
+        displayName: Set Properties
+        steps:
+          - bash: |
+              groupId=$($MAVEN help:evaluate -Dexpression="project.groupId" -q -DforceStdout)
+              artifactId=$($MAVEN help:evaluate -Dexpression="project.artifactId" -q -DforceStdout)
+              version=$($MAVEN help:evaluate -Dexpression="project.version" -q -DforceStdout)
+              echo "##vso[task.setvariable variable=PROJECT_VERSION;isOutput=true]$version"
+              echo "##vso[task.setvariable variable=PROJECT_ARTIFACTID;isOutput=true]$artifactId"
+              echo "##vso[task.setvariable variable=PROJECT_GROUPID;isOutput=true]$groupId"
+            name: project_properties
+            displayName: Set Project Properties
+            env:
+              MAVEN: $(SYSTEM_MAVEN_3)
+              JAVA_HOME: $(SYSTEM_JDK_17)
+          - bash: |
+              set -eu
+              echo "Project Version: $(project_properties.PROJECT_VERSION)"
+              echo "Project Artifact ID: $(project_properties.PROJECT_ARTIFACTID)"
+              echo "Project Group ID: $(project_properties.PROJECT_GROUPID)"
+            displayName: Display Project Properties
+
+      - job: Build
+        dependsOn: set_properties
+        variables:
+          - name: ARTIFACT_ID
+            value: $[ dependencies.set_properties.outputs['project_properties.PROJECT_ARTIFACTID'] ]
+        steps:
+          - task: Maven@4
+            displayName: Maven Build
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'package'
+              options: '-B -Pfixtures -DskipTests=true -Denforcer.skip=true -Denforcer.fail=false'
+              javaHomeOption: 'Path'
+              jdkDirectory: $(SYSTEM_JDK_17)
+              mavenVersionOption: 'Path'
+              mavenDirectory: $(SYSTEM_MAVEN_3_HOME)
+              
+          # Bash script to create a Dockerfile and build the Docker image.
+          # If your application already has a Docker plugin to build Docker images, you can skip this step. 
+          - bash: |
+              cat <<- EOF > Dockerfile
+              FROM premiercommonacr.azurecr.io/jre17:latest
+              USER root
+              RUN mkdir -p /opt/app ; chown -R core:core /opt/app
+              COPY --chown=core:core target/$(ARTIFACT_ID)-$(APP_VERSION).jar /opt/app/$(ARTIFACT_ID)-$(APP_VERSION).jar
+              USER core
+              WORKDIR /opt/app
+              CMD ["java", "-jar", "/opt/app/$(ARTIFACT_ID)-$(APP_VERSION).jar"]
+              EOF
+              cat Dockerfile
+              docker image build -t $(ARTIFACT_ID):$(APP_VERSION) .
+              docker image save -o image.tar $(ARTIFACT_ID):$(APP_VERSION)
+            displayName: Build Image
+
+          - publish: image.tar
+            artifact: drop-$(Build.BuildId)
+            displayName: Publish Artifacts
+
+      - job: CheckmarxScan
+        steps:
+          - template: checkmarx-scan.yml@sdlc_templates
+            parameters:
+              CHECKMARX_PASSWORD: $(CHECKMARX_PASSWORD)
+              BRANCH_SCAN_LIST: "main*,develop*,feature/*"
+              PROJECT_NAME: "$(Build.Repository.Name)"
+              PROJECT_VERSION: "$(Build.BuildId)"
+              SOURCE_PATH: "$(Build.SourcesDirectory)"
+              TEAM: "CIP"
+
+      - job: Nexuslifecycle_scan
+        displayName: Nexuslifecycle scan
+        steps:
+          - task: Maven@4
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'package'
+              options: '-B -DskipTests -Pfixtures -DskipTests=true -Denforcer.skip=true -Denforcer.fail=false'
+              javaHomeOption: 'Path'
+              jdkDirectory: $(SYSTEM_JDK_17)
+              mavenVersionOption: 'Path'
+              mavenDirectory: $(SYSTEM_MAVEN_3_HOME)
+
+          - task: Maven@4
+            displayName: NexusIQ Plugin
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'com.sonatype.clm:clm-maven-plugin:index -Dclm.additionalScopes=provided'
+              options: '-B'
+              javaHomeOption: 'Path'
+              jdkDirectory: $(SYSTEM_JDK_17)
+              mavenVersionOption: 'Path'
+              mavenDirectory: $(SYSTEM_MAVEN_3_HOME)
+
+          - template: lifecycle-scan.yml@sdlc_templates
+            parameters:
+              IQ_API_TOKEN: $(IQ_API_TOKEN)
+              ARTIFACT_VERSION: "$(Build.BuildId)"
+              DISTRIBUTION: Distributed
+              SCAN_TARGETS: ["'**/*.xml'", "'package*.json'", "'**/*.jar'"]
+              ENABLE_CALLFLOW: true

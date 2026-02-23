@@ -1,0 +1,118 @@
+jobs:
+- deployment: ${{ parameters.job_name }}
+  environment: "${{ parameters.ado_environment }}"
+  dependsOn: ${{ parameters.depends_on }}
+  variables:
+    - group: ${{ parameters.variable_group }}
+  pool: Premier Linux Agents  # Define the pool at the job level
+
+  strategy:
+    runOnce:
+      deploy:
+        steps:
+
+        - checkout: self
+
+        # **Generate CA Certificates on Linux Agents**
+        - task: Bash@3
+          displayName: "Generate CA Certificates using OpenSSL"
+          inputs:
+            targetType: 'inline'
+            script: |
+              # Create ca_certs directory and change to it
+              mkdir -p ca_certs
+              cd ca_certs
+      
+              # Download CA certificates using openssl s_client and save to separate files
+              echo "Downloading CA certificates..."
+              echo "" | openssl s_client -connect ssoqa.premierinc.com:443 2>/dev/null | sed -n -e '/BEGIN\ CERTIFICATE/,/END\ CERTIFICATE/ p' > ssoqa_premierinc_com.crt  
+              
+              # Copy PremierPKI root certs from repo
+              echo "Copying PremierPKI root certificates from repo..."
+               cp -v $(Build.SourcesDirectory)/certs/*.crt .
+
+              # List certs
+              echo "Certificates in ca_certs directory:"
+              ls -l
+    
+        - task: PublishPipelineArtifact@1
+          displayName: "Publish CA Certs"
+          inputs:
+            targetPath: 'ca_certs'
+            artifact: 'ca_certs_$(Build.BuildId)'
+          
+
+- job: update_ca
+  dependsOn: ${{ parameters.job_name }}
+  pool: Premier Windows Agents
+
+  steps:
+    - download: current
+      artifact: ca_certs_$(Build.BuildId)
+
+    - task: PowerShell@2
+      displayName: "Verify CA Certs Directory"
+      inputs:
+        targetType: 'inline'
+        script: |
+          $CERT_DIR = "$(Pipeline.Workspace)\ca_certs_$(Build.BuildId)"
+          
+          Write-Host "Checking CA Certs directory at: $CERT_DIR"
+
+          if (Test-Path $CERT_DIR) {
+              Write-Host "Directory exists. Listing contents:"
+              Get-ChildItem -Path $CERT_DIR -Recurse | Format-Table -AutoSize
+          } else {
+              Write-Host "ERROR: Certificate directory not found at $CERT_DIR"
+              Exit 1
+          }
+
+    - task: AzurePowerShell@5
+      displayName: Delete and Upload CA Certificates
+      inputs:
+        azureSubscription: ${{ parameters.az_subscription_sc }}
+        ScriptType: 'InlineScript'
+        Inline: |
+    
+          # Variables
+          $ResourceGroupName = "$(var_az_app_service_rg)"
+          $AppServiceName = "$(var_az_app_service)"
+    
+          # Get all existing public certificates
+          $existingCerts = Get-AzResource -ResourceType 'Microsoft.Web/sites/publicCertificates' `
+                                          -ResourceGroupName $ResourceGroupName `
+                                          -ResourceName $AppServiceName `
+                                          -ApiVersion '2022-03-01'
+    
+          # Delete existing public certificates
+          foreach ($cert in $existingCerts) {
+              $ResourceId = $cert.ResourceId
+              Write-Host "Deleting Certificate: $ResourceId"
+              Remove-AzResource -ResourceId $ResourceId -Force
+          }
+    
+          # List and Upload new certificates
+          Get-ChildItem "$(Pipeline.Workspace)\ca_certs_$(Build.BuildId)" | foreach-object { 
+            $CERTIFICATE_PATH=$_.FullName
+            $CERTIFICATE_NAME=$_.BaseName  
+    
+            Write-Host "Certificate Path: $CERTIFICATE_PATH"
+            Write-Host "Certificate Name: $CERTIFICATE_NAME"
+    
+            $CERTIFICATE = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($CERTIFICATE_PATH)
+            $PROPERTIES = @{
+                blob = [Convert]::ToBase64String($CERTIFICATE.RawData)
+                publicCertificateLocation = "CurrentUserMy"
+            }
+    
+            # Upload the certificate
+            Write-Host "Uploading Certificate: $CERTIFICATE_NAME"
+            New-AzResource -ResourceType 'Microsoft.Web/sites/publicCertificates' -ApiVersion '2022-03-01' `
+              -PropertyObject $PROPERTIES `
+              -ResourceGroupName $ResourceGroupName `
+              -ResourceName $AppServiceName/$CERTIFICATE_NAME `
+              -Force
+          }
+        FailOnStandardError: true
+        azurePowerShellVersion: 'LatestVersion'
+

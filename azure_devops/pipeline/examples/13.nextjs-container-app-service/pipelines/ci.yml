@@ -1,0 +1,44 @@
+stages:
+  - stage:  ci
+    displayName: Gateway CI
+    jobs:
+      - job: Build
+        steps:
+          - bash: docker image build --build-arg NODE_VERSION=$(NODE_VERSION) --build-arg PNPM_VERSION=$(PNPM_VERSION) -t $(SERVICE_NAME):$(VERSION_TAG) .
+            displayName: Build image
+
+          - bash: docker image save -o image.tar $(SERVICE_NAME):$(VERSION_TAG)
+            displayName: Create TAR image
+
+          - publish: image.tar
+            artifact: docker_image
+            displayName: Publish Artifacts
+
+      - job: SecurityScans
+        displayName: Security Scan
+        variables:
+          - group: 'SDLC Credentials'
+        steps:
+          - template: checkmarx-scan.yml@sdlc_templates
+            parameters:
+              CHECKMARX_PASSWORD: "$(CHECKMARX_PASSWORD)"
+              PROJECT_NAME: "sandbox-maven-dtr-ucp"
+              PROJECT_VERSION: $(Build.BuildId)
+              TEAM: "sandbox"
+              CHECKMARX_ARGUMENTS: -LocationPathExclude "grails-app/assets/javascripts,src/test,src/integration-test,grails-app/taglib/twitter/bootstrap" -LocationFilesExclude "**/grails-wrapper.jar"
+
+
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '$(NODE_VERSION)'
+
+          - bash: |
+              npm install -g pnpm@$(PNPM_VERSION)
+              pnpm install --frozen-lockfile --prod
+            displayName: Installing prod dependencies
+
+          - template: lifecycle-scan.yml@sdlc_templates
+            parameters:
+              IQ_API_TOKEN: $(IQ_API_TOKEN)
+              ARTIFACT_VERSION: "$(Build.BuildId)"
+              DISTRIBUTION: Hosted

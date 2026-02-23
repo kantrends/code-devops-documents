@@ -1,0 +1,88 @@
+stages:
+- stage: ci
+  displayName: CI
+  jobs:
+  - job: set_properties
+    displayName: Set Properties
+    steps:
+    - bash: | 
+        groupId=$($MAVEN help:evaluate -Dexpression="project.groupId" -q -DforceStdout)
+        artifactId=$($MAVEN help:evaluate -Dexpression="project.artifactId" -q -DforceStdout)
+        version=$($MAVEN help:evaluate -Dexpression="project.version" -q -DforceStdout)
+        echo "##vso[task.setvariable variable=PROJECT_VERSION;isOutput=true]$version"
+        echo "##vso[task.setvariable variable=PROJECT_ARTIFACTID;isOutput=true]$artifactId"
+        echo "##vso[task.setvariable variable=PROJECT_GROUPID;isOutput=true]$groupId"
+      name: project_properties
+      displayName: Set Project Properties
+      env:
+        MAVEN: $(SYSTEM_MAVEN_3)
+        JAVA_HOME: $(SYSTEM_JDK_8)
+
+    - bash: |
+        set -eu
+        echo "Project Version: $(project_properties.PROJECT_VERSION)"
+        echo "Project Artifact ID: $(project_properties.PROJECT_ARTIFACTID)"
+        echo "Project Group ID: $(project_properties.PROJECT_GROUPID)"
+      displayName: Display Project Properties
+      
+  - job: Build
+    steps:
+    - task: Maven@3
+      displayName: Maven Build
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'clean deploy'
+        options: '-B'
+        javaHomeOption: 'path'
+        jdkDirectory: $(SYSTEM_JDK_8)
+        mavenVersionOption: 'path'
+        mavenPath: $(SYSTEM_MAVEN_3)
+
+    - publish: deploy/playbooks
+      artifact: ansible
+
+  - job: checkmarx_scan
+    displayName: Checkmarx Scan
+    variables:
+      - group: 'SDLC Credentials'
+    steps:
+      - template: checkmarx-scan.yml@sdlc_templates
+        parameters:
+          CHECKMARX_PASSWORD: "$(CHECKMARX_PASSWORD)"
+          PROJECT_NAME: "sandbox-maven-dtr-ucp"
+          PROJECT_VERSION: $(Build.BuildId)
+          TEAM: "sandbox"
+          # CHECKMARX_ARGUMENTS is optional.  Add it if you want to skip any files.
+          CHECKMARX_ARGUMENTS: -LocationPathExclude "grails-app/assets/javascripts,src/test,src/integration-test,grails-app/taglib/twitter/bootstrap" -LocationFilesExclude "**/grails-wrapper.jar"
+
+
+  - job: SecurityScans
+    displayName: Security Scans
+    variables:
+    - group: 'SDLC Credentials'
+    steps:
+    - template: checkmarx-scan.yml@sdlc_templates
+      parameters:
+        CHECKMARX_PASSWORD: "$(CHECKMARX_PASSWORD)"
+        PROJECT_NAME: $(Build.Repository.Name)
+        PROJECT_VERSION: "$(Build.BuildId)"
+        TEAM: LegacyDA_CS
+        SOURCE_PATH: "$(Build.SourcesDirectory)"
+        
+    - task: Maven@3
+      displayName: Maven Build
+      inputs:
+        mavenPomFile: 'pom.xml'
+        goals: 'com.sonatype.clm:clm-maven-plugin:index -Dclm.additionalScopes=provided'
+        options: '-B -DskipTests'
+        javaHomeOption: 'path'
+        jdkDirectory: $(SYSTEM_JDK_8)
+        mavenVersionOption: 'path'
+        mavenPath: $(SYSTEM_MAVEN_3)
+
+    - template: lifecycle-scan.yml@sdlc_templates
+      parameters:
+        IQ_API_TOKEN: $(IQ_API_TOKEN)
+        ARTIFACT_VERSION: "$(Build.BuildId)"
+        DISTRIBUTION: Hosted
+        ENABLE_CALLFLOW: true

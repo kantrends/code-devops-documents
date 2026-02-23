@@ -1,0 +1,121 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sample-app-manifest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: sample-app-manifest
+  template:
+    metadata:
+      labels:
+        name: sample-app-manifest
+    spec:
+      containers:
+        - name: sample-app-manifest
+          image: REPLACE_IMAGE_NAME_TAG
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: http
+          volumeMounts:
+            # # Add this section for mounting azure file share
+            # - name: azure-file-share
+            #   mountPath: /mnt/azure
+            # Add this section if your app uses AZ key vault and want to read from volume
+            # cat /mnt/secrets-store/db-username
+            - name: secrets-store01-inline
+              mountPath: "/mnt/secrets-store"
+              readOnly: true
+            - name: azure
+              mountPath: /mnt/azure_pvc
+          env:
+            # you can read secrets either from ENV or from Volume Mount
+            # below are required if you going to pass key vault as ENV variable
+            # /mnt/secrets-store/db-username
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: sample-app-manifest-az-kv-secrets-obj
+                  key: db_username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sample-app-manifest-az-kv-secrets-obj
+                  key: db_password
+      volumes:
+        # Add this section for mounting azure file share to container
+        - name: azure
+          persistentVolumeClaim:
+            claimName: sample-app-1-manifest-pvc-1
+
+        # Add this section if your app uses AZ key vault
+        - name: secrets-store01-inline
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: "sample-app-manifest-az-kv-secrets"
+
+        # DON'T FOLLOW THIS SECTION
+        # # # Add this section for mounting azure file share to container
+        # - name: azure-file-share
+        #   csi:
+        #     driver: file.csi.azure.com
+        #     readOnly: false
+        #     volumeAttributes:
+        #       secretName: azure-storage-account-pqastoragenpw3pe-secret # secret created already by another pipeline 
+        #       shareName: aks-poc  # required
+        #       mountOptions: "dir_mode=0777,file_mode=0777,cache=strict,actimeo=30"  # optional
+      
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sample-app-manifest
+  labels:
+    name: sample-app-manifest
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    name: sample-app-manifest
+
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sample-app-manifest
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx # Ingress Controller (default value)
+  # tls section is not required as it is not mandatory in Member Tenant AKS cluster
+  # tls:
+  # - hosts:
+  #   - REPLACE_HOST_NAME
+  #   secretName: my-tls-secret
+  rules:
+  - host: REPLACE_HOST_NAME
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: sample-app-manifest
+            port:
+              number: 80
+
+# code-sample-app-nginx-manifest-dev.premierinc.com
+# code-sample-app-nginx-manifest-qa.premierinc.com
